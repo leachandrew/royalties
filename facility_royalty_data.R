@@ -1,22 +1,20 @@
-if(R.version$platform ==  "x86_64-apple-darwin15.6.0")
-  setwd("/Users/aleach/Google Drive")
-#PC
-if(R.version$platform ==  "x86_64-w64-mingw32")
-  setwd("C:/Users/aleach/Google Drive")
-print(getwd())
-source("andrew_base.R")
-
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(viridis)
 
 
 
 get_data<-function(){
 #load plant data
-  os_data_2019 <- read.xlsx(xlsxFile = "royalty_data_2019.xlsx", sheet = "all_data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  os_data_2020 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2020 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
+  os_data_2019 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2019 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
   os_data_2018 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2018 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
 
 os_data_2017 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2017 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
 os_data_2016 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2016 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
-os_data<-rbind(os_data_2019,os_data_2018,os_data_2017,os_data_2016)
+os_data<-rbind(os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
 
 
 os_data$royalty_bbl<-os_data$`Royalty.Payable.($)`/os_data$`Cleaned.Crude.Bitumen.at.RCP.(barrels)`
@@ -140,7 +138,7 @@ p<-ggplot(big_SAGD)+
   facet_wrap(~Project.Name,nrow = 3)+
   #scale_fill_manual()+
   #scale_x_reverse()+
-  coord_flip()+
+  #coord_flip()+
   scale_fill_viridis("Reporting Year",discrete = T)+
   guides(colour=FALSE,fill=guide_legend())+
   theme_minimal()+theme(
@@ -171,7 +169,7 @@ png<-1
 if(png==1)#set these to only turn on if you're making PNG graphs
   set_png("op_costs_bbl_SAGD.png",width=1600)
 p<-ggplot(big_SAGD)+
-  geom_col(aes(factor(Reporting.Year,levels = c(2016,2017,2018)),op_costs_bbl),size=.5,position = position_dodge(width = 1),fill="dodgerblue")+
+  geom_col(aes(factor(Reporting.Year,levels = c(2016,2017,2018,2019,2020)),op_costs_bbl),size=.5,position = position_dodge(width = 1),fill="dodgerblue")+
   facet_wrap(~Project.Name,nrow = 3)+
   #scale_fill_manual()+
   #scale_x_reverse()+
