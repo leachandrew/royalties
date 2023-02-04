@@ -1,3 +1,5 @@
+library(janitor)
+library(scales)
 library(tidyverse)
 library(readxl)
 library(openxlsx)
@@ -7,6 +9,9 @@ library(viridis)
 
 get_data<-function(){
 #load plant data
+  
+  os_data_2021 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2021 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
   os_data_2020 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2020 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
   
   os_data_2019 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2019 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
@@ -14,63 +19,60 @@ get_data<-function(){
 
 os_data_2017 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2017 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
 os_data_2016 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2016 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
-os_data<-rbind(os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
+os_data<-rbind(os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
 
 
 os_data$royalty_bbl<-os_data$`Royalty.Payable.($)`/os_data$`Cleaned.Crude.Bitumen.at.RCP.(barrels)`
 os_data$op_costs_bbl<-os_data$`Operating.Costs.($)`/os_data$`Cleaned.Crude.Bitumen.at.RCP.(barrels)`
 os_data$cap_costs_bbl<-os_data$`Capital.Costs.($)`/os_data$`Cleaned.Crude.Bitumen.at.RCP.(barrels)`
+
+os_data <- os_data %>% mutate(
+  Project.Name=gsub(" Project","",Project.Name),
+  Project.Name=gsub("Christina Lake Regional","Christina Lake (MEG)",Project.Name),
+  Project.Name=gsub("Christina Lake Thermal","Christina Lake (CVE)",Project.Name),
+  Project.Name=gsub("MacKay River Commercial","PetroChina",Project.Name),
+  Project.Name=gsub("MacKay River","MacKay River (Suncor)",Project.Name),
+  Project.Name=gsub("PetroChina","MacKay River (PetroChina)",Project.Name),
+  Project.Name=gsub(" Thermal","",Project.Name),
+  Project.Name=gsub(" Mine","",Project.Name),
+  Project.Name=gsub(" Oil Sands","",Project.Name),
+  Project.Name=gsub(" EOR","",Project.Name),
+  Project.Name=gsub(" Commercial","",Project.Name),
+  Project.Name=gsub(" SAGD","",Project.Name),
+  Project.Name=gsub(" Demonstration","",Project.Name),
+  Project.Name=gsub(" In-Situ","",Project.Name),
+)
+
 os_data$Project.Name<-as.factor(os_data$Project.Name)
 os_data$Project.Name<-factor(os_data$Project.Name,levels=rev(levels(os_data$Project.Name)))
 os_data$op_profit<-os_data$`Gross.Revenue.($/bbl)`-os_data$op_costs_bbl-os_data$royalty_bbl
 return(os_data)
 }
 
-
+os_data<-get_data()
 
 big_projects<-function(os_data_sent,threshold){
   big_projects<-os_data_sent %>% filter(`Cleaned.Crude.Bitumen.at.RCP.(barrels)`>threshold*365) %>% select(Project.Name) %>% unique()
   filter(os_data_sent,Project.Name %in% big_projects$Project.Name)
 }
 
-
-
-#graphs<-function(){
-#df1<- df1[df1$NAICS4!=2211,]
-
-png<-1
-if(png==1)#set these to only turn on if you're making PNG graphs
-  set_png("royalties_bbl.png")
 p<-ggplot(filter(os_data,os_data$`Cleaned.Crude.Bitumen.at.RCP.(barrels)`>10000*365) ,aes(Project.Name,royalty_bbl,colour=royalty_bbl,fill=royalty_bbl),alpha=0.5)+
-  geom_col(aes(Project.Name,royalty_bbl,fill=royalty_bbl),size=.5,position = position_dodge(width = .5),color="black")+
+  geom_col(aes(Project.Name,royalty_bbl),size=.5,position = position_dodge(width = .5),color="black")+
   #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
-  scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
   coord_flip()+
   facet_wrap(~Reporting.Year)+
   #scale_x_reverse()+
-  guides(colour=FALSE)+
-  theme_minimal()+theme(
-    legend.position = "bottom",
-    legend.margin=margin(c(.10,0,.10,0),unit="cm"),
-    legend.text = element_text(colour="black", size = 16, face = "bold"),
-    plot.caption = element_text(size = 14, face = "italic"),
-    plot.title = element_text(face = "bold"),
-    plot.subtitle = element_text(size = 16, face = "italic"),
-    panel.grid.minor = element_blank(),
-    text = element_text(size = 16,face = "bold"),
-    axis.text = element_text(size = 10,angle=0)
-    #axis.text = element_blank()
-  )+
+  weekly_graphs()+
   labs(x=NULL,y=NULL,
        title="Alberta Royalties Paid by Oil Sands Project",
        #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
        caption="Source: Alberta Government Data\nGraph by @andrew_leach")
-print(p)
-if(png==1)#set these to only turn on if you're making PNG graphs
-dev.off()
+p
+ggsave("royalties_bbl.png",bg="white")
 
 
-mines<-c("Muskeg River Mine","Fort Hills Oil Sands Project","Kearl","Horizon Mine","Muskeg River Mine","Jackpine Mine","Syncrude Mine","Suncor Oil Sands")
+mines<-c("Muskeg River","Fort Hills","Kearl","Horizon","Muskeg River","Jackpine","Syncrude","Suncor")
 
 SAGD<-c("Hangingstone","Leismer","Blackrod","Mackay River","Kirby","Christina Lake","Foster Creek",
 "Long Lake","Great Divide","Surmont","Jackfish","Sunrise","Orion","Firebag","MacKay River",
@@ -79,7 +81,7 @@ SAGD<-c("Hangingstone","Leismer","Blackrod","Mackay River","Kirby","Christina La
 
 
 
-os_data<-get_data()
+
 big_projects<-os_data %>% group_by(Project.Name) %>% mutate(max_bbls=max(`Cleaned.Crude.Bitumen.at.RCP.(barrels)`),
                                                             min_bbls=min(`Cleaned.Crude.Bitumen.at.RCP.(barrels)`))%>%
   filter(min_bbls>30000*365) %>%
@@ -91,7 +93,7 @@ unique(med_SAGD$Project.Name)
 
 bigger_projects<-os_data %>% filter(`Cleaned.Crude.Bitumen.at.RCP.(barrels)`>25000*365) %>% select(Project.Name) %>% unique()
 
-mine_projects<-os_data %>% filter(Project.Name %in% big_projects$Project.Name & Project.Name %in% mines)
+mine_projects<-os_data %>% filter(Project.Name %in% mines)
 
 #SAGD_matches <- data.frame(test_data$Project.Name[grep(paste(SAGD,collapse="|"), 
 #                                                  test_data$Project.Name)])
@@ -300,33 +302,132 @@ ggplot(subset(os_data,os_data$`Cleaned.Crude.Bitumen.at.RCP.(barrels)`>10000*365
 png<-1
 if(png==1)#set these to only turn on if you're making PNG graphs
   set_png("net_rev_bbl.png")
-p<-ggplot(subset(os_data,os_data$`Cleaned.Crude.Bitumen.at.RCP.(barrels)`>10000*365))+
-  geom_col(aes(Project.Name,op_profit,fill=op_profit>0,colour=op_profit>0),size=.5,position = position_dodge(width = .5))+
-  #geom_col(aes(Project.Name,op_costs_bbl),size=.5,position = position_dodge(width = .5),fill="firebrick",colour="firebrick",alpha=1)+
-  #scale_color_viridis("Operating Costs\nPer Barrel\nCleaned Bitumen")+
+
+projects<-os_data%>%filter(`Cleaned.Crude.Bitumen.at.RCP.(barrels)`>=10000*365)%>%select(Project.Name)%>%distinct()%>%
+  mutate(name=as.character(Project.Name))
+p<-
+  ggplot(os_data%>%filter(Project.Name %in% projects$name))+
+  geom_col(aes(as.factor(Reporting.Year),op_profit,fill=op_profit>0),size=.5,position = position_dodge())+
   scale_fill_manual("",values=c("FALSE"="red","TRUE"="darkgreen"),labels=c("Operating Loss","Operating Profit"))+
+  scale_x_discrete(breaks=pretty_breaks(n=5))+
+  facet_wrap(~Project.Name)+
   #scale_x_reverse()+
-  coord_flip()+
-  guides(colour=FALSE,fill=guide_legend())+
-  theme_minimal()+theme(
-    legend.position = "bottom",
-    legend.margin=margin(c(.10,0,.10,0),unit="cm"),
-    legend.text = element_text(colour="black", size = 16, face = "bold"),
-    plot.caption = element_text(size = 14, face = "italic"),
-    plot.title = element_text(face = "bold"),
-    plot.subtitle = element_text(size = 16, face = "italic"),
-    panel.grid.minor = element_blank(),
-    text = element_text(size = 16,face = "bold"),
-    axis.text = element_text(size = 10,angle=0)
-    #axis.text = element_blank()
-  )+
+  #coord_flip()+
+  guides(fill=guide_legend())+
+  weekly_graphs()+
+  theme(axis.text.x = element_text(size = 10,angle=90,vjust=0.5),
+        strip.text = element_text(size = 10))+
   labs(y="Operating Profit or Loss ($/bbl)",x=NULL,
-       title="2016 Operating Costs by Oil Sands Project",
-       subtitle="Gross Revenue Net Operating Costs and Royalties for Projects with 2016 Production above 10k bbl/d",
-       caption="Source: Alberta Government Data\nGraph by @andrew_leach")
+       title="Operating Profit by Oil Sands Project",
+       subtitle="Gross bitumen revenue net operating costs and royalties for projects with at least one year in 2016-2021 with production above 10k bbl/d",
+       caption="Source: Alberta Government data, graph by @andrew_leach")
 print(p)
-if(png==1)#set these to only turn on if you're making PNG graphs
-  dev.off()
+
+p<-
+  ggplot(os_data%>%filter(Project.Name %in% projects$name)%>%
+           mutate(payout=as.factor(Payout.Status),
+                  payout=fct_relevel(payout,"PRE"),
+                  Project.Name=fct_rev(Project.Name)))+
+  geom_col(aes(as.factor(Reporting.Year),`Royalty.Payable.($)`/`Cleaned.Crude.Bitumen.at.RCP.(barrels)`,fill=payout),size=.5,position = position_dodge())+
+  scale_fill_manual("",values=c("PRE"="red","POST"="darkgreen"),labels=c("Pre-Payout","Post-Payout"))+
+  scale_x_discrete(breaks=pretty_breaks(n=5))+
+  facet_wrap(~Project.Name,nrow = 5)+
+  #scale_x_reverse()+
+  #coord_flip()+
+  guides(fill=guide_legend())+
+  weekly_graphs()+
+  theme(axis.text.x = element_text(size = 10,angle=90,vjust=0.5),
+        strip.text = element_text(size = 8))+
+  labs(y="Royalties Payable ($/bbl)",x=NULL,
+       title="Royalties Paid by Oil Sands Project",
+       subtitle="Royalties payable for projects with at least one year in 2016-2021 with production above 10k bbl/d",
+       caption="Source: Alberta Government data, graph by @andrew_leach")
+print(p)
+ggsave("royalties.png",dpi=300,bg="white",width=16, height=10)
+
+
+mine_projects<-mine_projects%>%clean_names()
+p<-
+  ggplot(mine_projects%>%ungroup()%>%
+           mutate(
+             project_name=factor(project_name),
+             project_name=fct_relevel(project_name,"Suncor"),
+             project_name=fct_relevel(project_name,"Kearl",after = Inf),
+             project_name=fct_relevel(project_name,"Fort Hills",after = Inf),
+             project_name=fct_relevel(project_name,"Horizon",after = 2),
+             mfsp=(gross_revenue-operating_costs
+                   #-other_costs
+                   +other_net_proceeds-royalty_payable)
+                  /cleaned_crude_bitumen_at_rcp_barrels,
+         mfsp_col = ifelse(mfsp >= 0, "darkgreen", "red"))%>%
+           filter(!is.infinite(mfsp)))+
+  geom_col(aes(as.factor(reporting_year),mfsp,fill=mfsp_col),size=.5,position = position_dodge())+
+  #scale_fill_manual("",values=c("PRE"="red","POST"="darkgreen"),labels=c("Pre-Payout","Post-Payout"))+
+  scale_x_discrete(breaks=pretty_breaks(n=5))+
+  scale_y_continuous(breaks=pretty_breaks(n=10),expand=c(0,0))+
+  scale_fill_identity()+
+  facet_wrap(~project_name,nrow = 1)+
+  #scale_x_reverse()+
+  #coord_flip()+
+  guides(fill=guide_legend())+
+  weekly_graphs()+
+  theme(axis.text.x = element_text(size = 10,angle=90,vjust=0.5),
+        strip.text = element_text(size = 8))+
+  labs(y="MFSP Netback ($/bbl)",x=NULL,
+       #title="Royalties Paid by Oil Sands Project",
+       #subtitle="Royalties payable for projects with at least one year in 2016-2021 with production above 10k bbl/d",
+       caption="Source: Alberta Government data, graph by @andrew_leach",
+       NULL)
+print(p)
+ggsave("mfsp_netback.png",dpi=300,bg="white",width=16, height=7)
+
+print(p+labs(y="Revenue net Opex and Royalties ($/bbl)"))
+ggsave("mine_netback.png",dpi=300,bg="white",width=16, height=7)
+
+mine_projects%>%
+  rename(bitumen_prod=cleaned_crude_bitumen_at_rcp_barrels)%>%
+  mutate(
+    project_name=factor(project_name),
+    project_name=fct_relevel(project_name,"Suncor"),
+    project_name=fct_relevel(project_name,"Kearl",after = Inf),
+    project_name=fct_relevel(project_name,"Fort Hills",after = Inf),
+    project_name=fct_relevel(project_name,"Horizon",after = 2),
+    mfsp=(gross_revenue-operating_costs
+          #-other_costs
+          +other_net_proceeds-royalty_payable)
+    /bitumen_prod)%>%
+  filter(reporting_year==2021)%>%
+  summarize(mfsp=sum(mfsp*bitumen_prod)/sum(bitumen_prod),
+            op_cost=sum(operating_costs)/sum(bitumen_prod),
+            revenue=sum(gross_revenue_bbl*bitumen_prod)/sum(bitumen_prod),
+            royalties=sum(royalty_payable)/sum(bitumen_prod),
+            )
+
+sproule_data<-read_xlsx("sproule_2022.xlsx",sheet = "North American Oil",range = "B8:P22")%>%
+  slice(-c(1)) %>% 
+  clean_names()%>%
+  mutate(year=gsub(" Act","",year))
+
+names(sproule_data)<-gsub("x1_","",names(sproule_data))
+names(sproule_data)<-gsub("x2_","",names(sproule_data))
+names(sproule_data)<-gsub("x3_","",names(sproule_data))
+
+mine_projects<-mine_projects %>% left_join(sproule_data %>% select(year,wti_cushing_oklahoma_us_bbl,exchange_rate_cad_usd)%>%
+                              mutate(year=as.numeric(year)),by=c("reporting_year"="year"))
+
+mine_projects<-mine_projects %>% rename(wti=wti_cushing_oklahoma_us_bbl,
+                                                        cad_usd=exchange_rate_cad_usd)%>%
+  rename(bitumen_prod=cleaned_crude_bitumen_at_rcp_barrels)%>%
+  mutate(mfsp=(gross_revenue-operating_costs
+               #-other_costs
+               +other_net_proceeds-royalty_payable)
+         /bitumen_prod)
+
+
+model_data <-mine_projects %>% filter(!is.na(mfsp),!is.infinite(mfsp))
+lm(mfsp ~ wti+factor(reporting_year)+factor(payout_status), data = model_data)
+
+lm(mfsp ~ wti, data = model_data)
 
 
 pre_pay<-subset(os_data,os_data$`Unrecovered.Balance/Net.Loss.at.EOP.($)`>0)
@@ -479,3 +580,11 @@ os_data<-os_data %>% mutate(facility=fct_recode(facility, "Foster Creek" = "Fost
   print(p)
   ggsave("ghg_bbl_mines.png",dpi=300,width=16,height=12)
   
+  
+  
+#horizon
+  horizon_data<-os_data %>% clean_names() %>% filter(grepl("Horizon",project_name))%>%
+    mutate(production_daily=cleaned_crude_bitumen_at_rcp_barrels/365,
+           mfsp=(gross_revenue-operating_costs)/cleaned_crude_bitumen_at_rcp_barrels)
+           
+           
