@@ -1,0 +1,649 @@
+---
+title: "Alberta Oil Sands Royalty Data"
+author: Andrew Leach
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+      code_folding: hide
+      includes:
+      after_body: 
+      theme: lumen
+always_allow_html: yes
+editor: source
+
+---
+```{r, echo=FALSE,include=FALSE}
+knitr::opts_chunk$set(message=F,warning=F,cache = T,fig.align='center',dpi=220,fig.width=16,fig.height=9)
+options(scipen = 999)
+```
+
+One of the recommendations of the Alberta Royalty Review in 2015-16 was more transparency with respect to oil sands costs, profits, production and royalty payments. The Alberta Government has followed that recommendation and makes [project-level data](https://open.alberta.ca/opendata/alberta-oil-sands-royalty-data1) available on their open data site. This document compiles those data and provides some basic graphs that you might find useful. Where appropriate, I've provided a link to the R code used to process the data.
+
+```{r,cache=F}
+library(janitor)
+library(scales)
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(viridis)
+library(ggthemes)
+
+work_theme<-function(){
+  theme_tufte(18)+
+     theme(
+           plot.subtitle = element_text(color="grey10",size=rel(1)),
+           plot.title = element_text(face="bold"),
+           plot.caption = element_text(color="grey50",size=rel(1)),
+           legend.title = element_text(color="grey10",size=rel(1.5)),
+           legend.text = element_text(color="grey10",size=rel(1.5)),
+           strip.text = element_text(size=rel(1.2)),
+           axis.title = element_text(size=rel(1.2)),
+           axis.text = element_text(size=rel(1.2)),
+           axis.text.x = element_text(size=rel(.8)),
+           axis.ticks = element_blank(),
+           panel.spacing = unit(.75,"lines"),
+           legend.position = "bottom",
+           plot.margin = margin(t = .5, r = .5, b = .5, l = .5,unit= "cm"),
+           #axis.text.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0)
+           NULL
+           )+
+  NULL
+}
+
+colors_tableau10<-function () 
+{
+    return(c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", 
+        "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"))
+}
+
+```
+
+## Download and Combine the Annual Data for 2016-2021
+
+The first step is to load and process the data. The code button provides a window into how I've done this.
+
+
+```{r load data,cache=T}
+#load plant data
+make_os_data<-function(){
+os_data_2021 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2021 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
+  os_data_2020 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2020 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
+  os_data_2019 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2019 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  os_data_2018 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2018 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
+os_data_2017 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2017 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+os_data_2016 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2016 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
+#stack all the years together
+
+os_data<-bind_rows(os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
+
+#clean the names
+
+os_data<-os_data %>% clean_names()%>%
+  mutate(op_profit=gross_revenue-operating_costs-capital_costs-other_costs+other_net_proceeds)
+
+
+# data are reported for an individual project twice if it passes payout in a given year
+
+# see here for a test
+#os_data %>% group_by(project,reporting_year) %>% select(project,project_name,reporting_year,payout_status) %>% mutate(n_obs=n())%>% filter(n_obs>1) %>% arrange(-n_obs)
+
+# combine the data and include two things: a payout year indicator and a net and gross rev royalty number along with a total royalty paid
+os_data <- os_data %>% group_by(project,reporting_year,project_name,operator_name)%>%
+  summarize(
+    project_revenue=sum(project_revenue),
+    gross_revenue=sum(gross_revenue),
+    op_profit=sum(op_profit),
+    cleaned_crude_bitumen_at_rcp_barrels=sum(cleaned_crude_bitumen_at_rcp_barrels),
+    operating_costs=sum(operating_costs),
+    capital_costs=sum(capital_costs),
+    return_allowance=sum(return_allowance),
+    other_costs=sum(other_costs),
+    other_net_proceeds=sum(other_net_proceeds),
+    net_revenue=sum(net_revenue),
+    royalty_type=last(royalty_type),
+    royalty_type_start=first(royalty_type),
+    payout_start=first(payout_status),
+    payout_status=last(payout_status),
+    net_rev_royalty=sum(royalty_payable*(royalty_type=="NET")),
+    gross_rev_royalty=sum(royalty_payable*(royalty_type=="GROSS")),
+    royalty_payable=sum(royalty_payable),
+    royalty_rate=last(royalty_rate_percent),
+    first_royalty_rate=first(royalty_rate_percent),
+    royalty_avg=royalty_payable/gross_revenue,
+    payout_year=(n()>1),
+    unrecovered_balance_net_loss_at_eop=last(unrecovered_balance_net_loss_at_eop))%>%
+    mutate(
+      last_prod=last(cleaned_crude_bitumen_at_rcp_barrels)/365,
+      label=paste(project_name,"\n(",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
+  ungroup()%>%
+  group_by(project)%>%
+  mutate(project_payout=(last(payout_status)=="POST"))
+
+#fix facilities
+os_data <- os_data %>% mutate(
+  royalty_bbl=royalty_payable/cleaned_crude_bitumen_at_rcp_barrels,
+  op_costs_bbl=operating_costs/cleaned_crude_bitumen_at_rcp_barrels,
+  gross_revenue_bbl=gross_revenue/cleaned_crude_bitumen_at_rcp_barrels,
+  cap_costs_bbl=capital_costs/cleaned_crude_bitumen_at_rcp_barrels,
+  project_name=gsub(" Project","",project_name),
+  project_name=gsub("Christina Lake Regional","Christina Lake (MEG)",project_name),
+  project_name=gsub("Christina Lake Thermal","Christina Lake (CVE)",project_name),
+  project_name=gsub("MacKay River Commercial","PetroChina",project_name),
+  project_name=gsub("MacKay River","MacKay River (Suncor)",project_name),
+  project_name=gsub("PetroChina","MacKay River (PetroChina)",project_name),
+  project_name=gsub(" Thermal","",project_name),
+  project_name=gsub(" Mine","",project_name),
+  project_name=gsub(" Oil Sands","",project_name),
+  project_name=gsub(" EOR","",project_name),
+  project_name=gsub(" Commercial","",project_name),
+  project_name=gsub(" SAGD","",project_name),
+  project_name=gsub(" Demonstration","",project_name),
+  project_name=gsub(" In-Situ","",project_name),
+  project_name=as.factor(project_name),
+  op_profit_net=op_profit-royalty_payable,
+  op_profit_bbl=op_profit/cleaned_crude_bitumen_at_rcp_barrels,
+  op_profit_net_bbl=op_profit_net/cleaned_crude_bitumen_at_rcp_barrels
+  )
+
+}
+
+os_data<-make_os_data()
+
+    
+mines<-c("Muskeg River","Fort Hills","Kearl","Horizon","Muskeg River","Jackpine","Syncrude","Suncor")
+
+SAGD<-c("Hangingstone","Leismer","Blackrod","Mackay River","Kirby","Christina Lake","Foster Creek",
+        "Long Lake","Great Divide","Surmont","Jackfish","Sunrise","Orion","Firebag","MacKay River",
+        "West Ells","SAGD","Tucker","Narrows Lake")
+
+os_data<-os_data %>% mutate(mine=(project_name %in% mines),
+                            in_situ=(!project_name %in% mines),
+                            )%>%
+  group_by(project_name)%>%
+  mutate(min_bbls=min(cleaned_crude_bitumen_at_rcp_barrels)/365,
+         max_bbls=max(cleaned_crude_bitumen_at_rcp_barrels)/365)%>%
+  ungroup()%>%
+  mutate(project=(max_bbls>8000),
+         big_project=(min_bbls>30000),
+         med_project=(min_bbls>8000)&(max_bbls<50000)
+         )
+
+
+```
+
+## Production
+
+```{r mines prod,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(project,mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod)
+                ),
+       aes(factor(reporting_year),last_prod/1000,fill=project_type))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=-90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Bitumen Production (thousands of barrels per day)",
+       title="Annual Bitumen Production, Oil Sands Mining Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+```{r in situ prod,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(big_project,!mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod)
+                ),
+       aes(factor(reporting_year),last_prod/1000,fill=project_type))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Bitumen Production (thousands of barrels per day)",
+       title="Annual Bitumen Production, Larger Oil Sands In Situ Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+
+## Revenue per Barrel
+
+
+```{r mines rev,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod)
+                ),
+       aes(factor(reporting_year),gross_revenue_bbl,fill=project_type))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Revenue per barrel bitumen (CA$/bbl)",
+       title="Gross Revenue per Barrel Bitumen, Oil Sands Mining Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+```{r in situ rev,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(big_project,!mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod)
+                ),
+       aes(factor(reporting_year),gross_revenue_bbl,fill=project_type))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Revenue per barrel bitumen (CA$/bbl)",
+       title="Gross Revenue per Barrel Bitumen, Larger In Situ Oil Sands Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+## Operating Costs
+
+
+```{r mining op costs,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod)
+                ),
+       aes(factor(reporting_year),op_costs_bbl,fill=project_type))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Operating cost per barrel bitumen (CA$/bbl)",
+       title="Operating Costs, Oil Sands Mining Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+
+```{r in situ op costs,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(big_project,!mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod)
+                ),
+       aes(factor(reporting_year),op_costs_bbl,fill=project_type))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Operating cost per barrel bitumen (CA$/bbl)",
+       title="Operating Costs, Larger In Situ Oil Sands Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+## Operating Cost Density Plot
+
+
+```{r,fig.align='center',fig.width=16, fig.height=12,dpi=220}
+ggplot(os_data%>%filter(big_project) %>% group_by(reporting_year) %>% 
+  mutate(year_total=sum(cleaned_crude_bitumen_at_rcp_barrels), weight=cleaned_crude_bitumen_at_rcp_barrels/year_total) %>%
+  ungroup()%>%
+    mutate(mine=as.factor(mine),
+           mine=fct_recode(mine,Mine="TRUE","In Situ"="FALSE"))
+           
+           , aes(op_costs_bbl,group=factor(reporting_year),weights=weight))+
+  stat_density(aes(color=factor(reporting_year)),geom="line",position = "identity",trim=T,size=1.6)+
+  scale_colour_manual(NULL,values=colors_tableau10())+
+  facet_wrap(~mine,scales="free_x")+
+  expand_limits(x=0)+
+  guides(color=guide_legend(nrow=1))+
+  #geom_density(aes(color=factor(reporting_year)), alpha=0.8) + 
+  labs(title="Density plot of oil sands operating costs per barrel bitumen", 
+       subtitle="Production-weighted, for projects with more than 10,000 barrels per day of bitumen production",
+       caption="Source: Government of Alberta 2016 and 2017 Royalty Data, graph by Andrew Leach",
+       x="Operating Costs ($Cdn/bbl bitumen)",
+       fill="Reporting Year")+
+  work_theme()
+```
+
+
+
+## Royalties
+
+
+
+```{r mine royalties,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod),
+                payout=as_factor(payout_status),
+                payout=fct_relevel(payout,"PRE")
+                ),
+       aes(factor(reporting_year),royalty_bbl,fill=payout))+
+  scale_fill_manual("",values=c("PRE"="lightgreen","POST"="darkgreen"),labels=c("Pre-Payout","Post-Payout"))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  guides(fill=guide_legend(nrow = 1),color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Royalties payable per barrel bitumen (CA$/bbl)",
+       title="Royalties Payable per Barrel Bitumen, Oil Sands Mining Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+
+```{r in situ royalties,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(big_project,!mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod),
+                payout=as_factor(payout_status),
+                payout=fct_relevel(payout,"PRE")
+                ),
+       aes(factor(reporting_year),royalty_bbl,fill=payout))+
+  scale_fill_manual("",values=c("PRE"="lightgreen","POST"="darkgreen"),labels=c("Pre-Payout","Post-Payout"))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  guides(fill=guide_legend(nrow = 1),color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Royalties payable per barrel bitumen (CA$/bbl)",
+       title="Royalties Payable per Barrel Bitumen, Larger In Situ Oil Sands Projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+```
+
+
+## Operating Profits (Post-Royalty)
+
+```{r mine net profits,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(mine,project_name!="Fort Hills")%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod),
+                payout=as_factor(payout_status),
+                payout=fct_relevel(payout,"PRE")
+                ),
+       aes(factor(reporting_year),op_profit_net_bbl,fill=payout))+
+  scale_fill_manual("",values=c("PRE"="lightgreen","POST"="darkgreen"),labels=c("Pre-Payout","Post-Payout"))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  guides(fill=guide_legend(nrow = 1),color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Operating profit per barrel bitumen (CA$/bbl)",
+       title="Operating Profit per Barrel Bitumen, Oil Sands Mining Projects",
+       subtitle="Gross revenue net operating and capital costs and royalties, excluding Fort Hills",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+
+```{r in situ net profits,fig.align='center',fig.width=15, fig.height=8,dpi=220}
+
+ggplot(os_data %>% filter(big_project,!mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod),
+                payout=as_factor(payout_status),
+                payout=fct_relevel(payout,"PRE")
+                ),
+       aes(factor(reporting_year),op_profit_net_bbl,fill=payout))+
+  scale_fill_manual("",values=c("PRE"="lightgreen","POST"="darkgreen"),labels=c("Pre-Payout","Post-Payout"))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  guides(fill=guide_legend(nrow = 1),color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 7, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Operating profit per barrel bitumen (CA$/bbl)",
+       title="Operating Profit per Barrel Bitumen, Oil Sands In-Situ Projects",
+       subtitle="Gross revenue net operating and capital costs and royalties",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+```
+
+
+
+## Unrecovered capital costs
+
+```{r mining cap_cost,fig.align='center',fig.width=14, fig.height=6,dpi=220}
+
+ggplot(os_data %>% filter(project,!project_payout,mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod),
+                payout=as_factor(payout_status),
+                payout=fct_relevel(payout,"PRE")
+                ),
+       aes(factor(reporting_year),unrecovered_balance_net_loss_at_eop/10^6,fill=mine))+
+  #scale_fill_manual("",values=c("FALSE"="lightgreen","TRUE"="darkgreen"),labels=c("In Situ","Mine"))+
+  #scale_fill_brewer("Project type")+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  scale_fill_brewer()+
+  #coord_flip()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 1,labeller = label_wrap_gen(width = 10, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Unrecovered capital costs (CA$ million)",
+       title="Unrecovered capital costs per royalty formula, oil sands mining projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+```{r in situ cap_cost,fig.align='center',fig.width=16, fig.height=12,dpi=220}
+ggplot(os_data %>% filter(project,!project_payout,!mine)%>%
+         mutate(project_type=ifelse(mine,"Mine","In Situ"),
+                project_name_factor=as.factor(project_name),
+                project_name_factor=fct_reorder(project_name_factor,last_prod),
+                payout=as_factor(payout_status),
+                payout=fct_relevel(payout,"PRE")
+                ),
+       aes(factor(reporting_year),unrecovered_balance_net_loss_at_eop/10^6,fill=mine))+
+  #scale_fill_manual("",values=c("FALSE"="lightgreen","TRUE"="darkgreen"),labels=c("In Situ","Mine"))+
+  #scale_fill_brewer("Project type")+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  scale_fill_brewer()+
+  #coord_flip()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name_factor,nrow = 2,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Unrecovered capital costs (CA$ million)",
+       title="Unrecovered capital costs per royalty formula, larger in situ oil sands projects",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+## GHG emissions intensity
+
+```{r ei 1,fig.align='center',fig.width=16, fig.height=7,dpi=220}
+#load plant data
+os_ghg_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>%
+  clean_names()%>% pivot_longer(cols=seq(15,23),names_to="year",values_to="adj_ghg")%>%
+  select(company,facility,subsector,product,year,adj_ghg)%>%mutate(year=str_sub(year,start=2,end=5))
+
+os_prod_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>%
+  clean_names()%>% pivot_longer(cols=seq(24,32),names_to="year",values_to="prod")%>%
+  select(company,facility,subsector,product,year,prod)%>%mutate(year=str_sub(year,start=2,end=5))
+
+os_ei_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>%
+  clean_names()%>% pivot_longer(cols=seq(33,41),names_to="year",values_to="ei")%>%
+  select(company,facility,subsector,product,year,ei)%>%mutate(year=str_sub(year,start=2,end=5)) %>% 
+  left_join(os_ghg_data)%>% 
+  left_join(os_prod_data)
+
+
+
+#keep anything larger than tucker
+os_big_projects<- os_ei_data %>% filter(year==2019) %>% group_by(subsector)%>% filter(prod>1250000)
+
+os_ei_data %>% mutate(facility=factor(facility),facility=fct_other(facility,keep = os_big_projects$facility))%>%
+  group_by(facility,subsector,product,year) %>% summarize(prod=sum(prod),ei=sum(adj_ghg)/sum(prod),adj_ghg=sum(adj_ghg))%>%
+  mutate(facility=fct_recode(facility, "Foster Creek" = "Foster Creek SAGD Bitumen Battery (with Cogen)",
+                             "Canadian Natural AOSP"="Canadian Natural Upgrading Limited Muskeg River Mine and Jackpine Mine and Scotford Upgrader",
+                             "MEG Christina Lake"="MEG Christina Lake Regional project",
+                             "Cenovus Christina Lake"="Christina Lake SAGD Bitumen Battery",
+                             "Hangingstone"="Hangingstone Expansion project",
+                             "MacKay River"="MacKay River, In-Situ Oil Sands Plant",
+                             "Surmont"="Surmont SAGD Commercial Battery"))%>%
+  group_by(facility) %>% mutate(prod_2019=sum(prod*(year==2019)*6.2929/365))%>%
+  mutate(label2=paste(facility,"\n(",formatC(round(prod_2019,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""),
+         label=facility)%>%
+  filter(subsector!="In Situ",ei<2)%>%
+  ggplot()+
+  geom_col(aes(year,ei,fill="A"),size=0.25,position = position_dodge(width = .25),color="black")+
+  scale_fill_brewer()+
+  #geom_hline(aes(yintercept = 32.65*1.26,colour="Current $CA bitumen value"))+
+  facet_wrap(~label,nrow = 1,labeller = label_wrap_gen(width = 12, multi_line = TRUE))+
+  #scale_x_reverse()+
+  #coord_flip()+
+  #scale_fill_viridis("Reporting Year",discrete = T)+
+  guides(colour=guide_legend(),fill=FALSE)+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(y="Cogen-adjusted emissions per barrel (t/bbl)",x=NULL,
+       title="2011-2019 Emissions Intensity by Oil Sands Mining project",
+       #subtitle="projects with production above 40,000 bbl/d in every year. 2019 production, rounded to the nearest thousand barrels per day, shown in brackets.",
+       caption="Source: Alberta Government data, graph by @andrew_leach")
+```
+
+```{r ei 2,fig.align='center',fig.width=14, fig.height=16,dpi=220}
+
+
+
+os_ei_data %>% mutate(facility=factor(facility),facility=fct_other(facility,keep = os_big_projects$facility))%>%
+  group_by(facility,subsector,product,year) %>% summarize(prod=sum(prod),ei=sum(adj_ghg)/sum(prod),adj_ghg=sum(adj_ghg))%>%
+  mutate(facility=fct_recode(facility, "Foster Creek" = "Foster Creek SAGD Bitumen Battery (with Cogen)",
+                                                "Canadian Natural AOSP"="Canadian Natural Upgrading Limited Muskeg River Mine and Jackpine Mine and Scotford Upgrader",
+                                                "MEG Christina Lake"="MEG Christina Lake Regional project",
+                                                "Cenovus Christina Lake"="Christina Lake SAGD Bitumen Battery",
+                                                "Hangingstone"="Hangingstone Expansion project",
+                                                "MacKay River"="MacKay River, In-Situ Oil Sands Plant",
+                                                "Surmont"="Surmont SAGD Commercial Battery"))%>%
+  group_by(facility) %>% mutate(prod_2019=sum(prod*(year==2019)*6.2929/365))%>%
+    mutate(label2=paste(facility,"\n(",formatC(round(prod_2019,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""),
+         label=facility)%>%
+  filter(subsector=="In Situ",ei<2)%>%
+  mutate(facility=fct_relevel(facility,after = Inf))%>%
+  ggplot()+
+  geom_col(aes(year,ei,fill="A"),size=0.25,position = position_dodge(width = .25),color="black")+
+  scale_fill_brewer()+
+  #geom_hline(aes(yintercept = 32.65*1.26,colour="Current $CA bitumen value"))+
+  facet_wrap(~label,nrow = 3,labeller = label_wrap_gen(width = 12, multi_line = TRUE))+
+  scale_colour_manual("",values="black")+
+  #scale_x_reverse()+
+  #coord_flip()+
+  #scale_fill_viridis("Reporting Year",discrete = T)+
+  guides(colour=guide_legend(),fill=FALSE)+
+  work_theme()+
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(y="Cogen-adjusted emissions per barrel (t/bbl)",x=NULL,
+       title="2011-2019 Emissions Intensity by Oil Sands In-Situ project",
+       #subtitle="projects with production above 40,000 bbl/d in every year. 2019 production, rounded to the nearest thousand barrels per day, shown in brackets.",
+       caption="Source: Alberta Government data, graph by @andrew_leach")
+
+```
