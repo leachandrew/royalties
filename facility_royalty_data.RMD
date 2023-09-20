@@ -19,7 +19,7 @@ options(scipen = 999)
 
 One of the recommendations of the Alberta Royalty Review in 2015-16 was more transparency with respect to oil sands costs, profits, production and royalty payments. The Alberta Government has followed that recommendation and makes [project-level data](https://open.alberta.ca/opendata/alberta-oil-sands-royalty-data1) available on their open data site. This document compiles those data and provides some basic graphs that you might find useful. Where appropriate, I've provided a link to the R code used to process the data.
 
-```{r,cache=F}
+```{r,cache=F, include=F}
 library(janitor)
 library(scales)
 library(tidyverse)
@@ -59,14 +59,17 @@ colors_tableau10<-function ()
 
 ```
 
-## Download and Combine the Annual Data for 2016-2021
+<!-- ## Download and Combine the Annual Data for 2016-2022 -->
 
-The first step is to load and process the data. The code button provides a window into how I've done this.
+<!-- The first step is to load and process the data. The code button provides a window into how I've done this. In this case, I've manually combined the data in my own spreadsheet so I can see any changes and also look up individual project information easily. -->
 
 
-```{r load data,cache=T}
+```{r load data,cache=T,include=F}
 #load plant data
 make_os_data<-function(){
+
+os_data_2022 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2022 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
 os_data_2021 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2021 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
   
   os_data_2020 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2020 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
@@ -79,7 +82,7 @@ os_data_2016 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2016 Royalty 
 
 #stack all the years together
 
-os_data<-bind_rows(os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
+os_data<-bind_rows(os_data_2022,os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
 
 #clean the names
 
@@ -342,6 +345,8 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
 
 ```
 
+### Project-level operating costs ($/bbl bitumen)
+
 ```{r}
 #test<-
   os_data %>% 
@@ -357,21 +362,20 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
       label=fct_reorder(label,last_prod),
       op_costs_bbl=format(op_costs_bbl,nsmall=2),
       op_costs_bbl=ifelse(grepl("NaN",op_costs_bbl),"",op_costs_bbl))%>%
-    select(label,project_type,reporting_year,op_costs_bbl)%>%
+    select(label,project_type,reporting_year,op_costs_bbl,last_prod)%>%
   pivot_wider(names_from = reporting_year,values_from = op_costs_bbl)%>%
   rename("Project"=label,"Project Type"=project_type)%>%
-  arrange(Project)%>%
+  arrange(-last_prod)%>%select(-last_prod)%>%
   #rename("2021 Production"=last_prod)%>%
   rename_all( ~ gsub("x","",.))%>%
-  kable(table.attr = "style='width:80%;'",align = c("l","c", rep("r", 6)), linesep = "", escape = FALSE) %>% 
+  kable(table.attr = "style='width:80%;'",align = c("l","c", rep("r", 7)), linesep = "", escape = FALSE) %>% 
   kable_styling(fixed_thead = T,bootstrap_options = c("hover", "condensed","responsive"),full_width = T)%>%
+  scroll_box(width = "1000px", height = "500px")%>%
   I() 
-  #row_spec(1, bold = T)
-
 ```
 
 
-## Operating Cost Density Plot
+### Operating Cost Density Plot
 
 
 ```{r,fig.align='center',fig.width=16, fig.height=12,dpi=220}
@@ -460,6 +464,40 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
        caption="Data via Government of Alberta, graph by @andrew_leach")
 ```
 
+### Project-level royalties payable ($/bbl bitumen)
+
+```{r}
+#test<-
+
+  os_data %>% #filter(!mine)%>%
+  
+  group_by(project_name)%>%
+  mutate(
+      last_prod=last(cleaned_crude_bitumen_at_rcp_barrels)/365,
+      label=paste(project_name,"\n(",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
+  ungroup()%>%
+  filter(last_prod>10000)%>%
+  mutate(label=factor(label),
+       project_type=ifelse(mine,"Mine","In Situ"),
+      label=fct_reorder(label,last_prod),
+      #op_profit_net_bbl=op_profit_net_bbl/gross_revenue_bbl*100,
+      royalty_bbl=format(round(royalty_bbl,2),nsmall=2),
+      royalty_bbl=ifelse(grepl("NaN",royalty_bbl),"",royalty_bbl),
+      royalty_bbl=ifelse(grepl("Inf",royalty_bbl),"",royalty_bbl)
+      )%>%
+    select(label,project_type,reporting_year,royalty_type,royalty_bbl,last_prod)%>%
+  pivot_wider(names_from = reporting_year,values_from = royalty_bbl)%>%
+  rename("Project"=label,
+         "Project Type"=project_type)%>%
+  arrange(-last_prod)%>%select(-last_prod)%>%
+  #rename("2021 Production"=last_prod)%>%
+  rename_all( ~ gsub("x","",.))%>%
+  kable(table.attr = "style='width:80%;'",align = c("l","c", rep("r", 7)), linesep = "", escape = FALSE) %>% 
+  kable_styling(fixed_thead = T,bootstrap_options = c("hover", "condensed","responsive"),full_width = T)%>%
+  scroll_box(width = "1000px", height = "500px")%>%
+  I() 
+```
+
 
 ## Operating Profits (Post-Royalty)
 
@@ -521,9 +559,11 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
        caption="Data via Government of Alberta, graph by @andrew_leach")
 ```
 
+### Project-level operating profits ($/bbl bitumen)
 
 ```{r}
 #test<-
+
   os_data %>% #filter(!mine)%>%
   
   group_by(project_name)%>%
@@ -535,24 +575,25 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
   mutate(label=factor(label),
        project_type=ifelse(mine,"Mine","In Situ"),
       label=fct_reorder(label,last_prod),
-      op_profit_net_bbl=op_profit_net_bbl/gross_revenue_bbl*100,
+      #op_profit_net_bbl=op_profit_net_bbl/gross_revenue_bbl*100,
       op_profit_net_bbl=format(round(op_profit_net_bbl,2),nsmall=2),
       op_profit_net_bbl=ifelse(grepl("NaN",op_profit_net_bbl),"",op_profit_net_bbl),
       op_profit_net_bbl=ifelse(grepl("Inf",op_profit_net_bbl),"",op_profit_net_bbl)
       )%>%
-    select(label,project_type,reporting_year,op_profit_net_bbl)%>%
+    select(label,project_type,reporting_year,op_profit_net_bbl,last_prod)%>%
   pivot_wider(names_from = reporting_year,values_from = op_profit_net_bbl)%>%
   rename("Project"=label,
          "Project Type"=project_type)%>%
-  arrange(Project)%>%
+  arrange(-last_prod)%>%select(-last_prod)%>%
   #rename("2021 Production"=last_prod)%>%
   rename_all( ~ gsub("x","",.))%>%
-  kable(table.attr = "style='width:80%;'",align = c("l","c", rep("r", 6)), linesep = "", escape = FALSE) %>% 
+  kable(table.attr = "style='width:80%;'",align = c("l","c", rep("r", 7)), linesep = "", escape = FALSE) %>% 
   kable_styling(fixed_thead = T,bootstrap_options = c("hover", "condensed","responsive"),full_width = T)%>%
-  I() 
-  #row_spec(1, bold = T)
-
+  scroll_box(width = "1000px", height = "500px")%>%
+  I()
 ```
+
+
 ## Unrecovered capital costs
 
 ```{r mining cap_cost,fig.align='center',fig.width=14, fig.height=6,dpi=220}
@@ -614,96 +655,134 @@ ggplot(os_data %>% filter(project,!project_payout,!mine)%>%
 
 ```
 
-## GHG emissions intensity
+<!-- ## GHG emissions intensity -->
 
-```{r ei 1,fig.align='center',fig.width=16, fig.height=7,dpi=220}
-#load plant data
-os_ghg_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>%
-  clean_names()%>% pivot_longer(cols=seq(15,23),names_to="year",values_to="adj_ghg")%>%
-  select(company,facility,subsector,product,year,adj_ghg)%>%mutate(year=str_sub(year,start=2,end=5))
+<!-- ```{r ei 1,fig.align='center',fig.width=16, fig.height=7,dpi=220} -->
+<!-- #get federal GHG data -->
 
-os_prod_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>%
-  clean_names()%>% pivot_longer(cols=seq(24,32),names_to="year",values_to="prod")%>%
-  select(company,facility,subsector,product,year,prod)%>%mutate(year=str_sub(year,start=2,end=5))
+<!-- #excel file https://data-donnees.ec.gc.ca/data/substances/monitor/greenhouse-gas-reporting-program-ghgrp-facility-greenhouse-gas-ghg-data/PDGES-GHGRP-GHGEmissionsGES-2004-Present.xlsx -->
+<!-- download.file("https://data-donnees.ec.gc.ca/data/substances/monitor/greenhouse-gas-reporting-program-ghgrp-facility-greenhouse-gas-ghg-data/PDGES-GHGRP-GHGEmissionsGES-2004-Present.xlsx",destfile = "fed_ghgs.xlsx",mode="wb") -->
+<!-- fed_fac_rep <- read_excel("fed_ghgs.xlsx",sheet = "GHG Emissions GES 2004-2021") %>% clean_names()%>% -->
+<!-- #fed_fac_rep <- read_csv("fed_facility_ghgs.csv") %>% clean_names()%>% -->
+<!--   filter(facility_province_or_territory_province_ou_territoire_de_linstallation %in% c("Alberta"))%>%  -->
+<!--   select(ghg_id=ghgrp_id_no_no_didentification_du_pdges,npri_id=facility_npri_id_numero_didentification_de_l_inrp, -->
+<!--          naics=facility_naics_code_code_scian_de_linstallation, -->
+<!--          year=reference_year_annee_de_reference,facility_name=facility_name_nom_de_linstallation, -->
+<!--          ghgs=total_emissions_tonnes_co2e_emissions_totales_tonnes_eq_co2, -->
+<!--          company=reporting_company_trade_name_nom_commercial_de_la_societe_declarante, -->
+<!--          company_legal=reporting_company_legal_name_denomination_sociale_de_la_societe_declarante)%>% -->
+<!--   filter(naics %in% c(211141,211142)) -->
 
-os_ei_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>%
-  clean_names()%>% pivot_longer(cols=seq(33,41),names_to="year",values_to="ei")%>%
-  select(company,facility,subsector,product,year,ei)%>%mutate(year=str_sub(year,start=2,end=5)) %>% 
-  left_join(os_ghg_data)%>% 
-  left_join(os_prod_data)
+<!-- #testing merge the data sources! -->
+
+<!-- #load ab_ghg_data plant data -->
+<!-- os_ghg_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>% -->
+<!--   clean_names()%>% pivot_longer(cols=seq(15,23),names_to="year",values_to="adj_ghg")%>% -->
+<!--   select(company,facility,subsector,product,year,adj_ghg)%>%mutate(year=str_sub(year,start=2,end=5)) -->
+
+<!-- ab_ghg_id <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emissions and Cogen Data", range="A1:I330")%>% -->
+<!--     clean_names()%>% select(company=company_name,facility=facility_name,ghg_id=ghgrpid)%>%distinct() -->
 
 
-
-#keep anything larger than tucker
-os_big_projects<- os_ei_data %>% filter(year==2019) %>% group_by(subsector)%>% filter(prod>1250000)
-
-os_ei_data %>% mutate(facility=factor(facility),facility=fct_other(facility,keep = os_big_projects$facility))%>%
-  group_by(facility,subsector,product,year) %>% summarize(prod=sum(prod),ei=sum(adj_ghg)/sum(prod),adj_ghg=sum(adj_ghg))%>%
-  mutate(facility=fct_recode(facility, "Foster Creek" = "Foster Creek SAGD Bitumen Battery (with Cogen)",
-                             "Canadian Natural AOSP"="Canadian Natural Upgrading Limited Muskeg River Mine and Jackpine Mine and Scotford Upgrader",
-                             "MEG Christina Lake"="MEG Christina Lake Regional project",
-                             "Cenovus Christina Lake"="Christina Lake SAGD Bitumen Battery",
-                             "Hangingstone"="Hangingstone Expansion project",
-                             "MacKay River"="MacKay River, In-Situ Oil Sands Plant",
-                             "Surmont"="Surmont SAGD Commercial Battery"))%>%
-  group_by(facility) %>% mutate(prod_2019=sum(prod*(year==2019)*6.2929/365))%>%
-  mutate(label2=paste(facility,"\n(",formatC(round(prod_2019,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""),
-         label=facility)%>%
-  filter(subsector!="In Situ",ei<2)%>%
-  ggplot()+
-  geom_col(aes(year,ei,fill="A"),size=0.25,position = position_dodge(width = .25),color="black")+
-  scale_fill_brewer()+
-  #geom_hline(aes(yintercept = 32.65*1.26,colour="Current $CA bitumen value"))+
-  facet_wrap(~label,nrow = 1,labeller = label_wrap_gen(width = 12, multi_line = TRUE))+
-  #scale_x_reverse()+
-  #coord_flip()+
-  #scale_fill_viridis("Reporting Year",discrete = T)+
-  guides(colour=guide_legend(),fill=FALSE)+
-  work_theme()+
-  theme(legend.position="bottom",
-        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
-        )+
-  labs(y="Cogen-adjusted emissions per barrel (t/bbl)",x=NULL,
-       title="2011-2019 Emissions Intensity by Oil Sands Mining project",
-       #subtitle="projects with production above 40,000 bbl/d in every year. 2019 production, rounded to the nearest thousand barrels per day, shown in brackets.",
-       caption="Source: Alberta Government data, graph by @andrew_leach")
-```
-
-```{r ei 2,fig.align='center',fig.width=14, fig.height=16,dpi=220}
+<!-- ab_ghg_mapping <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>% -->
+<!--   clean_names()%>%select(company,facility,seq(7,11))%>% -->
+<!--   pivot_longer(cols=-c(company,facility),names_to="ghgrp",values_to="ghg_id")%>%distinct()%>% -->
+<!--   filter(!is.na(ghg_id)) -->
 
 
 
-os_ei_data %>% mutate(facility=factor(facility),facility=fct_other(facility,keep = os_big_projects$facility))%>%
-  group_by(facility,subsector,product,year) %>% summarize(prod=sum(prod),ei=sum(adj_ghg)/sum(prod),adj_ghg=sum(adj_ghg))%>%
-  mutate(facility=fct_recode(facility, "Foster Creek" = "Foster Creek SAGD Bitumen Battery (with Cogen)",
-                                                "Canadian Natural AOSP"="Canadian Natural Upgrading Limited Muskeg River Mine and Jackpine Mine and Scotford Upgrader",
-                                                "MEG Christina Lake"="MEG Christina Lake Regional project",
-                                                "Cenovus Christina Lake"="Christina Lake SAGD Bitumen Battery",
-                                                "Hangingstone"="Hangingstone Expansion project",
-                                                "MacKay River"="MacKay River, In-Situ Oil Sands Plant",
-                                                "Surmont"="Surmont SAGD Commercial Battery"))%>%
-  group_by(facility) %>% mutate(prod_2019=sum(prod*(year==2019)*6.2929/365))%>%
-    mutate(label2=paste(facility,"\n(",formatC(round(prod_2019,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""),
-         label=facility)%>%
-  filter(subsector=="In Situ",ei<2)%>%
-  mutate(facility=fct_relevel(facility,after = Inf))%>%
-  ggplot()+
-  geom_col(aes(year,ei,fill="A"),size=0.25,position = position_dodge(width = .25),color="black")+
-  scale_fill_brewer()+
-  #geom_hline(aes(yintercept = 32.65*1.26,colour="Current $CA bitumen value"))+
-  facet_wrap(~label,nrow = 3,labeller = label_wrap_gen(width = 12, multi_line = TRUE))+
-  scale_colour_manual("",values="black")+
-  #scale_x_reverse()+
-  #coord_flip()+
-  #scale_fill_viridis("Reporting Year",discrete = T)+
-  guides(colour=guide_legend(),fill=FALSE)+
-  work_theme()+
-  theme(legend.position="bottom",
-        axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
-        )+
-  labs(y="Cogen-adjusted emissions per barrel (t/bbl)",x=NULL,
-       title="2011-2019 Emissions Intensity by Oil Sands In-Situ project",
-       #subtitle="projects with production above 40,000 bbl/d in every year. 2019 production, rounded to the nearest thousand barrels per day, shown in brackets.",
-       caption="Source: Alberta Government data, graph by @andrew_leach")
+<!-- fed_ghg_id<-fed_fac_rep %>% select(ghg_id,company_fed=company,fed_facilty=facility_name)%>% -->
+<!--   distinct()%>% -->
+<!--   full_join(ab_ghg_id)%>% -->
+<!--   select(ghg_id,fed_facilty,facility)%>% -->
+<!--   full_join(os_data_2022 %>%clean_names() %>%select(project,facility=project_name,company=operator_name) ) -->
 
-```
+
+
+
+
+<!-- os_prod_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>% -->
+<!--   clean_names()%>% pivot_longer(cols=seq(24,32),names_to="year",values_to="prod")%>% -->
+<!--   select(company,facility,subsector,product,year,prod)%>%mutate(year=str_sub(year,start=2,end=5)) -->
+
+<!-- os_ei_data <- read_excel(path = "ab_os_ghgs.xlsx", sheet = "Emission Intensity", range="A4:AO35")%>% -->
+<!--   clean_names()%>% pivot_longer(cols=seq(33,41),names_to="year",values_to="ei")%>% -->
+<!--   select(company,facility,subsector,product,year,ei)%>%mutate(year=str_sub(year,start=2,end=5)) %>%  -->
+<!--   left_join(os_ghg_data)%>%  -->
+<!--   left_join(os_prod_data) -->
+
+
+
+<!-- #keep anything larger than tucker -->
+<!-- os_big_projects<- os_ei_data %>% filter(year==2019) %>% group_by(subsector)%>% filter(prod>1250000) -->
+
+<!-- os_ei_data %>% mutate(facility=factor(facility),facility=fct_other(facility,keep = os_big_projects$facility))%>% -->
+<!--   group_by(facility,subsector,product,year) %>% summarize(prod=sum(prod),ei=sum(adj_ghg)/sum(prod),adj_ghg=sum(adj_ghg))%>% -->
+<!--   mutate(facility=fct_recode(facility, "Foster Creek" = "Foster Creek SAGD Bitumen Battery (with Cogen)", -->
+<!--                              "Canadian Natural AOSP"="Canadian Natural Upgrading Limited Muskeg River Mine and Jackpine Mine and Scotford Upgrader", -->
+<!--                              "MEG Christina Lake"="MEG Christina Lake Regional project", -->
+<!--                              "Cenovus Christina Lake"="Christina Lake SAGD Bitumen Battery", -->
+<!--                              "Hangingstone"="Hangingstone Expansion project", -->
+<!--                              "MacKay River"="MacKay River, In-Situ Oil Sands Plant", -->
+<!--                              "Surmont"="Surmont SAGD Commercial Battery"))%>% -->
+<!--   group_by(facility) %>% mutate(prod_2019=sum(prod*(year==2019)*6.2929/365))%>% -->
+<!--   mutate(label2=paste(facility,"\n(",formatC(round(prod_2019,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""), -->
+<!--          label=facility)%>% -->
+<!--   filter(subsector!="In Situ",ei<2)%>% -->
+<!--   ggplot()+ -->
+<!--   geom_col(aes(year,ei,fill="A"),size=0.25,position = position_dodge(width = .25),color="black")+ -->
+<!--   scale_fill_brewer()+ -->
+<!--   #geom_hline(aes(yintercept = 32.65*1.26,colour="Current $CA bitumen value"))+ -->
+<!--   facet_wrap(~label,nrow = 1,labeller = label_wrap_gen(width = 12, multi_line = TRUE))+ -->
+<!--   #scale_x_reverse()+ -->
+<!--   #coord_flip()+ -->
+<!--   #scale_fill_viridis("Reporting Year",discrete = T)+ -->
+<!--   guides(colour=guide_legend(),fill=FALSE)+ -->
+<!--   work_theme()+ -->
+<!--   theme(legend.position="bottom", -->
+<!--         axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5) -->
+<!--         )+ -->
+<!--   labs(y="Cogen-adjusted emissions per barrel (t/bbl)",x=NULL, -->
+<!--        title="2011-2019 Emissions Intensity by Oil Sands Mining project", -->
+<!--        #subtitle="projects with production above 40,000 bbl/d in every year. 2019 production, rounded to the nearest thousand barrels per day, shown in brackets.", -->
+<!--        caption="Source: Alberta Government data, graph by @andrew_leach") -->
+<!-- ``` -->
+
+<!-- ```{r ei 2,fig.align='center',fig.width=14, fig.height=16,dpi=220} -->
+
+
+
+<!-- os_ei_data %>% mutate(facility=factor(facility),facility=fct_other(facility,keep = os_big_projects$facility))%>% -->
+<!--   group_by(facility,subsector,product,year) %>% summarize(prod=sum(prod),ei=sum(adj_ghg)/sum(prod),adj_ghg=sum(adj_ghg))%>% -->
+<!--   mutate(facility=fct_recode(facility, "Foster Creek" = "Foster Creek SAGD Bitumen Battery (with Cogen)", -->
+<!--                                                 "Canadian Natural AOSP"="Canadian Natural Upgrading Limited Muskeg River Mine and Jackpine Mine and Scotford Upgrader", -->
+<!--                                                 "MEG Christina Lake"="MEG Christina Lake Regional project", -->
+<!--                                                 "Cenovus Christina Lake"="Christina Lake SAGD Bitumen Battery", -->
+<!--                                                 "Hangingstone"="Hangingstone Expansion project", -->
+<!--                                                 "MacKay River"="MacKay River, In-Situ Oil Sands Plant", -->
+<!--                                                 "Surmont"="Surmont SAGD Commercial Battery"))%>% -->
+<!--   group_by(facility) %>% mutate(prod_2019=sum(prod*(year==2019)*6.2929/365))%>% -->
+<!--     mutate(label2=paste(facility,"\n(",formatC(round(prod_2019,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""), -->
+<!--          label=facility)%>% -->
+<!--   filter(subsector=="In Situ",ei<2)%>% -->
+<!--   mutate(facility=fct_relevel(facility,after = Inf))%>% -->
+<!--   ggplot()+ -->
+<!--   geom_col(aes(year,ei,fill="A"),size=0.25,position = position_dodge(width = .25),color="black")+ -->
+<!--   scale_fill_brewer()+ -->
+<!--   #geom_hline(aes(yintercept = 32.65*1.26,colour="Current $CA bitumen value"))+ -->
+<!--   facet_wrap(~label,nrow = 3,labeller = label_wrap_gen(width = 12, multi_line = TRUE))+ -->
+<!--   scale_colour_manual("",values="black")+ -->
+<!--   #scale_x_reverse()+ -->
+<!--   #coord_flip()+ -->
+<!--   #scale_fill_viridis("Reporting Year",discrete = T)+ -->
+<!--   guides(colour=guide_legend(),fill=FALSE)+ -->
+<!--   work_theme()+ -->
+<!--   theme(legend.position="bottom", -->
+<!--         axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5) -->
+<!--         )+ -->
+<!--   labs(y="Cogen-adjusted emissions per barrel (t/bbl)",x=NULL, -->
+<!--        title="2011-2019 Emissions Intensity by Oil Sands In-Situ project", -->
+<!--        #subtitle="projects with production above 40,000 bbl/d in every year. 2019 production, rounded to the nearest thousand barrels per day, shown in brackets.", -->
+<!--        caption="Source: Alberta Government data, graph by @andrew_leach") -->
+
+<!-- ``` -->
