@@ -171,11 +171,16 @@ os_data<-os_data %>% mutate(mine=(project_name %in% mines),
   mutate(min_bbls=min(cleaned_crude_bitumen_at_rcp_barrels)/365,
          max_bbls=max(cleaned_crude_bitumen_at_rcp_barrels)/365)%>%
   ungroup()%>%
-  mutate(project=(max_bbls>8000),
+  mutate(small_project=(max_bbls<=8000),
          big_project=(min_bbls>30000),
          med_project=(min_bbls>8000)&(max_bbls<50000)
          )
 
+save(os_data,file = "os_data.rdata")
+
+#os_data<-os_data%>%select(project_name,mine,big_project,reporting_year,production=cleaned_crude_bitumen_at_rcp_barrels,gross_revenue,capital_costs,operating_costs,other_net_proceeds,other_costs,royalty_payable,payout_status)
+
+#save(os_data,file = "os_data.rdata")
 
 ```
 
