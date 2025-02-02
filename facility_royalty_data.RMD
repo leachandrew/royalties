@@ -68,6 +68,8 @@ colors_tableau10<-function ()
 #load plant data
 make_os_data<-function(){
 
+os_data_2023 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2023 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
 os_data_2022 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2022 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
   
 os_data_2021 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2021 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
@@ -82,7 +84,7 @@ os_data_2016 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2016 Royalty 
 
 #stack all the years together
 
-os_data<-bind_rows(os_data_2022,os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
+os_data<-bind_rows(os_data_2023,os_data_2022,os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
 
 #clean the names
 
@@ -188,7 +190,7 @@ save(os_data,file = "os_data.rdata")
 
 ```{r mines prod,fig.align='center',fig.width=16, fig.height=8,dpi=220}
 
-ggplot(os_data %>% filter(project,mine)%>%
+ggplot(os_data %>% filter(mine)%>%
          mutate(project_type=ifelse(mine,"Mine","In Situ"),
                 project_name_factor=as.factor(project_name),
                 project_name_factor=fct_reorder(project_name_factor,last_prod)
@@ -355,25 +357,25 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
 ```{r}
 #test<-
   os_data %>% 
+  filter(cleaned_crude_bitumen_at_rcp_barrels>1000000)%>%
   #filter(!mine)%>%
   group_by(project_name)%>%
   mutate(
       last_prod=last(cleaned_crude_bitumen_at_rcp_barrels)/365,
-      label=paste(project_name,"\n(",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
+      label=paste(project_name," (",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
   ungroup()%>%
-  filter(last_prod>10000)%>%
+  filter(last_prod>100000)%>%
   mutate(label=factor(label),
       project_type=ifelse(mine,"Mine","In Situ"),
       label=fct_reorder(label,last_prod),
       op_costs_bbl=format(op_costs_bbl,nsmall=2),
-      op_costs_bbl=ifelse(grepl("NaN",op_costs_bbl),"",op_costs_bbl))%>%
+      op_costs_bbl=ifelse(grepl("NaN",op_costs_bbl),"",op_costs_bbl),
+      op_costs_bbl=ifelse(grepl("Inf",op_costs_bbl),"",op_costs_bbl))%>%
     select(label,project_type,reporting_year,op_costs_bbl,last_prod)%>%
   pivot_wider(names_from = reporting_year,values_from = op_costs_bbl)%>%
   rename("Project"=label,"Project Type"=project_type)%>%
   arrange(-last_prod)%>%select(-last_prod)%>%
-  #rename("2021 Production"=last_prod)%>%
-  rename_all( ~ gsub("x","",.))%>%
-  kable(table.attr = "style='width:80%;'",align = c("l","c", rep("r", 7)), linesep = "", escape = FALSE) %>% 
+  kable(align = c("l","c", rep("r", 8)), linesep = "", escape = FALSE) %>% 
   kable_styling(fixed_thead = T,bootstrap_options = c("hover", "condensed","responsive"),full_width = T)%>%
   scroll_box(width = "1000px", height = "500px")%>%
   I() 
@@ -479,7 +481,9 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
   group_by(project_name)%>%
   mutate(
       last_prod=last(cleaned_crude_bitumen_at_rcp_barrels)/365,
-      label=paste(project_name,"\n(",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
+      label=paste(project_name," (",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""),
+      royalty_type=str_to_title(paste(last(payout_status),"-PAYOUT",sep = "")),
+      )%>%
   ungroup()%>%
   filter(last_prod>10000)%>%
   mutate(label=factor(label),
@@ -493,7 +497,8 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
     select(label,project_type,reporting_year,royalty_type,royalty_bbl,last_prod)%>%
   pivot_wider(names_from = reporting_year,values_from = royalty_bbl)%>%
   rename("Project"=label,
-         "Project Type"=project_type)%>%
+         "Project Type"=project_type,
+         "Payout Status"=royalty_type)%>%
   arrange(-last_prod)%>%select(-last_prod)%>%
   #rename("2021 Production"=last_prod)%>%
   rename_all( ~ gsub("x","",.))%>%
@@ -574,7 +579,7 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
   group_by(project_name)%>%
   mutate(
       last_prod=last(cleaned_crude_bitumen_at_rcp_barrels)/365,
-      label=paste(project_name,"\n(",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
+      label=paste(project_name," (",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
   ungroup()%>%
   filter(last_prod>10000)%>%
   mutate(label=factor(label),
@@ -603,7 +608,7 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
 
 ```{r mining cap_cost,fig.align='center',fig.width=14, fig.height=6,dpi=220}
 
-ggplot(os_data %>% filter(project,!project_payout,mine)%>%
+ggplot(os_data %>% filter(!project_payout,mine)%>%
          mutate(project_type=ifelse(mine,"Mine","In Situ"),
                 project_name_factor=as.factor(project_name),
                 project_name_factor=fct_reorder(project_name_factor,last_prod),
@@ -632,7 +637,7 @@ ggplot(os_data %>% filter(project,!project_payout,mine)%>%
 ```
 
 ```{r in situ cap_cost,fig.align='center',fig.width=16, fig.height=12,dpi=220}
-ggplot(os_data %>% filter(project,!project_payout,!mine)%>%
+ggplot(os_data %>% filter(!small_project,!project_payout,!mine)%>%
          mutate(project_type=ifelse(mine,"Mine","In Situ"),
                 project_name_factor=as.factor(project_name),
                 project_name_factor=fct_reorder(project_name_factor,last_prod),

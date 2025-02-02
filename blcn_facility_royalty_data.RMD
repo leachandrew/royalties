@@ -1,0 +1,690 @@
+---
+title: "Alberta Oil Sands Royalty Data"
+author: Andrew Leach
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+      code_folding: hide
+      includes:
+      after_body: 
+      theme: lumen
+always_allow_html: yes
+editor: source
+
+---
+```{r, echo=FALSE,include=FALSE}
+knitr::opts_chunk$set(message=F,warning=F,cache = T,fig.align='center',dpi=220,fig.width=16,fig.height=9)
+options(scipen = 999)
+```
+
+One of the recommendations of the Alberta Royalty Review in 2015-16 was more transparency with respect to oil sands costs, profits, production and royalty payments. The Alberta Government has followed that recommendation and makes [project-level data](https://open.alberta.ca/opendata/alberta-oil-sands-royalty-data1) available on their open data site. This document compiles those data and provides some basic graphs that you might find useful. Where appropriate, I've provided a link to the R code used to process the data.
+
+```{r,cache=F, include=F}
+library(janitor)
+library(scales)
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(viridis)
+library(ggthemes)
+library(kableExtra)
+library(sf)
+
+work_theme<-function(){
+  theme_tufte(18)+
+     theme(
+           plot.subtitle = element_text(color="grey10",size=rel(1.25)),
+           plot.title = element_text(face="bold"),
+           plot.caption = element_text(color="grey50",size=rel(1)),
+           legend.title = element_text(color="grey10",size=rel(1)),
+           legend.text = element_text(color="grey10",size=rel(1)),
+           strip.text = element_text(size=rel(1.2)),
+           axis.title = element_text(size=rel(1.2)),
+           axis.text = element_text(size=rel(1.2)),
+           axis.text.x = element_text(size=rel(.8)),
+           axis.ticks = element_blank(),
+           panel.spacing = unit(.75,"lines"),
+           legend.position = "bottom",
+           plot.margin = margin(t = .5, r = .5, b = .5, l = .5,unit= "cm"),
+           #axis.text.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0)
+           NULL
+           )+
+  NULL
+}
+
+colors_tableau10<-function () 
+{
+    return(c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", 
+        "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"))
+}
+
+```
+
+<!-- ## Download and Combine the Annual Data for 2016-2022 -->
+
+<!-- The first step is to load and process the data. The code button provides a window into how I've done this. In this case, I've manually combined the data in my own spreadsheet so I can see any changes and also look up individual project information easily. -->
+
+
+```{r load data,cache=T,include=F}
+#load plant data
+make_os_data<-function(){
+
+os_data_2023 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2023 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
+os_data_2022 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2022 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
+os_data_2021 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2021 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
+  os_data_2020 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2020 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  
+  os_data_2019 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2019 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+  os_data_2018 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2018 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
+os_data_2017 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2017 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+os_data_2016 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2016 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
+#stack all the years together
+
+os_data<-bind_rows(os_data_2023,os_data_2022,os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
+
+#clean the names
+
+os_data<-os_data %>% clean_names()%>%
+  mutate(op_profit=gross_revenue-operating_costs-other_costs+other_net_proceeds)
+
+
+# data are reported for an individual project twice if it passes payout in a given year
+
+# see here for a test
+#os_data %>% group_by(project,reporting_year) %>% select(project,project_name,reporting_year,payout_status) %>% mutate(n_obs=n())%>% filter(n_obs>1) %>% arrange(-n_obs)
+
+# combine the data and include two things: a payout year indicator and a net and gross rev royalty number along with a total royalty paid
+os_data <- os_data %>% group_by(project,reporting_year,project_name,operator_name)%>%
+  summarize(
+    project_revenue=sum(project_revenue),
+    gross_revenue=sum(gross_revenue),
+    op_profit=sum(op_profit),
+    cleaned_crude_bitumen_at_rcp_barrels=sum(cleaned_crude_bitumen_at_rcp_barrels),
+    operating_costs=sum(operating_costs),
+    capital_costs=sum(capital_costs),
+    return_allowance=sum(return_allowance),
+    other_costs=sum(other_costs),
+    other_net_proceeds=sum(other_net_proceeds),
+    net_revenue=sum(net_revenue),
+    royalty_type=last(royalty_type),
+    royalty_type_start=first(royalty_type),
+    payout_start=first(payout_status),
+    payout_status=last(payout_status),
+    net_rev_royalty=sum(royalty_payable*(royalty_type=="NET")),
+    gross_rev_royalty=sum(royalty_payable*(royalty_type=="GROSS")),
+    royalty_payable=sum(royalty_payable),
+    royalty_rate=last(royalty_rate_percent),
+    first_royalty_rate=first(royalty_rate_percent),
+    royalty_avg=royalty_payable/gross_revenue,
+    payout_year=(n()>1),
+    unrecovered_balance_net_loss_at_eop=last(unrecovered_balance_net_loss_at_eop))%>%
+    mutate(
+      last_prod=last(cleaned_crude_bitumen_at_rcp_barrels)/365,
+      label=paste(project_name,"\n(",formatC(round(last_prod,digits=-3),format="f", big.mark=",",digits = 0)," bbl/d)",sep=""))%>%
+  ungroup()%>%
+  group_by(project)%>%
+  mutate(project_payout=(last(payout_status)=="POST"))
+
+#fix facilities
+os_data <- os_data %>% mutate(
+  royalty_bbl=royalty_payable/cleaned_crude_bitumen_at_rcp_barrels,
+  op_costs_bbl=operating_costs/cleaned_crude_bitumen_at_rcp_barrels,
+  gross_revenue_bbl=gross_revenue/cleaned_crude_bitumen_at_rcp_barrels,
+  cap_costs_bbl=capital_costs/cleaned_crude_bitumen_at_rcp_barrels,
+  project_name=gsub(" Project","",project_name),
+  project_name=gsub("Christina Lake Regional","Christina Lake (MEG)",project_name),
+  project_name=gsub("Christina Lake Thermal","Christina Lake (CVE)",project_name),
+  project_name=gsub("MacKay River Commercial","PetroChina",project_name),
+  project_name=gsub("MacKay River","MacKay River (Suncor)",project_name),
+  project_name=gsub("PetroChina","MacKay River (PetroChina)",project_name),
+  project_name=gsub("Harvest BlackGold","BlackGold",project_name),
+  
+  project_name=gsub(" Thermal","",project_name),
+  project_name=gsub(" Mine","",project_name),
+  project_name=gsub(" Oil Sands","",project_name),
+  project_name=gsub(" EOR","",project_name),
+  project_name=gsub(" Commercial","",project_name),
+  project_name=gsub(" SAGD","",project_name),
+  project_name=gsub(" Demonstration","",project_name),
+  project_name=gsub(" In-Situ","",project_name),
+  project_name=as.factor(project_name),
+  op_profit_net=op_profit-royalty_payable,
+  op_profit_bbl=op_profit/cleaned_crude_bitumen_at_rcp_barrels,
+  op_profit_net_bbl=op_profit_net/cleaned_crude_bitumen_at_rcp_barrels
+  )
+
+}
+
+os_data<-make_os_data()
+
+    
+mines<-c("Muskeg River","Fort Hills","Kearl","Horizon","Muskeg River","Jackpine","Syncrude","Suncor")
+
+SAGD<-c("Hangingstone","Leismer","Blackrod","Mackay River","Kirby","Christina Lake","Foster Creek",
+        "Long Lake","Great Divide","Surmont","Jackfish","Sunrise","Orion","Firebag","MacKay River",
+        "West Ells","SAGD","Tucker","Narrows Lake")
+
+BLCN<-c("Blackrod",
+        "BlackGold",
+        "Christina Lake (CVE)",
+        "Christina Lake (MEG)",
+        "Cold Lake",
+        "Foster Creek",
+        "Jackfish",
+        "Kirby North",
+        "Kirby South",
+        "Leismer",
+        "Wolf Lake Crown Agreement",
+        "Burnt Lake",
+        "Primrose",
+        "Narrows Lake",
+        "Orion",
+        "Pike 1",
+        "Surmont",
+        "Tucker"
+        )
+
+os_data<-os_data %>% mutate(blcn=(project_name %in% BLCN),
+                            )%>%
+  group_by(project_name)%>%
+  mutate(min_bbls=min(cleaned_crude_bitumen_at_rcp_barrels)/365,
+         max_bbls=max(cleaned_crude_bitumen_at_rcp_barrels)/365)%>%
+  ungroup()
+
+blcn_data<-
+      os_data %>% filter(blcn)%>%
+         mutate(project_name=as.factor(project_name),
+                project_name=fct_reorder(project_name,-last_prod)
+                )
+write.csv(file = "projects.csv",blcn_data%>%select(project_name)%>%distinct())
+
+blcn_data<-blcn_data%>%
+        mutate(project_name=fct_other(project_name,keep=head(levels(blcn_data$project_name),5),other_level = "All Other Projects Combined"))%>%
+        group_by(project_name,reporting_year)%>%
+        summarize(prod=sum(cleaned_crude_bitumen_at_rcp_barrels,na.rm = T),
+                  royalties=sum(royalty_payable,na.rm = T),
+                  revenues=sum(gross_revenue,na.rm=T)
+                    )%>%
+  ungroup()
+  
+
+save(blcn_data,file = "os_data_blcn.rdata")
+
+total<-blcn_data %>% 
+         summarize(royalties=sum(royalties,na.rm=T)/10^9,
+                   rev=sum(revenues,na.rm=T)/10^9,
+                   prod=sum(prod,na.rm=T)/10^9)
+
+
+#os_data<-os_data%>%select(project_name,mine,big_project,reporting_year,production=cleaned_crude_bitumen_at_rcp_barrels,gross_revenue,capital_costs,operating_costs,other_net_proceeds,other_costs,royalty_payable,payout_status)
+
+#save(os_data,file = "os_data.rdata")
+
+```
+
+## Projects Table
+```{r prj_table,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+  # blcn_data%>%
+  # mutate(prod=prod/(365+leap_year(reporting_year)*1))%>%
+  # kbl(escape = FALSE,table.attr = "style='width:80%;'",digits=2,align=rep('c', 2)) %>%
+  # kable_styling(fixed_thead = T,bootstrap_options = c("hover", "condensed","responsive"),full_width = T)%>%
+  # add_header_above(header = c("Western Canadian Select (WCS) prices in the Canada Net-Zero scenario of the Canada Energy Regulator's Canada's Energy Future (2023) report"=2))%>%
+  # I() 
+  #     ggplot(aes(factor(reporting_year),prod/10^3))+
+  # geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  # #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  # scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  # #coord_flip()+
+  # scale_fill_brewer()+
+  # guides(fill="none",color="none")+
+  # facet_wrap(~project_name,nrow = 1,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  # #scale_x_reverse()+
+  # work_theme()+
+  # theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+  #       )+
+  # labs(x=NULL,y="Bitumen Production (1000 barrels per day)",
+  #      title="Annual Bitumen Production by Project, Beaver Lake Cree Nation Core Territory",
+  #      subtitle=paste("Total production since 2016 of ",round(total$prod,2)," billion barrels and 2023 average production of ",sum(blcn_data%>%filter(reporting_year==2023)%>%select(prod)/365/10^6)%>%round(2)," million barrels per day",sep=""),
+  #      caption="Data via Government of Alberta, graph by @andrew_leach")
+  #      
+  # 
+
+```
+
+
+
+## Production
+
+```{r in situ prod,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+  blcn_data%>%
+  mutate(prod=prod/(365+leap_year(reporting_year)*1))%>%
+      ggplot(aes(factor(reporting_year),prod/10^3))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name,nrow = 1,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Bitumen Production (1000 barrels per day)",
+       title="Annual Bitumen Production by Project, Beaver Lake Cree Nation Core Territory",
+       subtitle=paste("Total production since 2016 of ",round(total$prod,2)," billion barrels and 2023 average production of ",sum(blcn_data%>%filter(reporting_year==2023)%>%select(prod)/365/10^6)%>%round(2)," million barrels per day",sep=""),
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+       
+  
+
+```
+
+
+```{r cum_prod,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+        blcn_data%>%
+        group_by(project_name)%>%
+        mutate(prod=cumsum(prod))%>%
+        ungroup()%>%
+  filter(reporting_year==2023)%>%
+        ggplot(aes(factor(reporting_year),prod/10^6))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name,nrow = 1,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  #expand_limits(y=30)+
+  scale_y_continuous(breaks=pretty_breaks(n=5))+
+  #theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)     )+
+  theme(axis.text.x = element_blank())+
+  labs(x=NULL,y="Production (million barrels)",
+       title="Total Bitumen Production (2016-2023), Beaver Lake Cree Nation Core Territory",
+       subtitle=paste("Total production from all projects in BLCN Territory since 2016 of ",round(total$prod,2)," billion barrels",sep=""),
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by Andrew Leach")
+
+```
+
+
+
+## Project Revenue
+
+```{r in situ prod,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+        blcn_data%>%
+       ggplot(aes(factor(reporting_year),revenues/10^9))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  scale_y_continuous(breaks=pretty_breaks(n=5))+
+  expand_limits(y=8)+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name,nrow = 1,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+        )+
+  labs(x=NULL,y="Project Revenue (billions of dollars per year)",
+       title="Annual Gross Bitumen Revenue, Larger Oil Sands In Situ Projects",
+       subtitle=paste("Total project revenue since 2016 of CA$",round(total$rev,2)," billion, or CA$",round(total$rev/total$prod,2)," per barrel on average.",sep=""),
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by @andrew_leach")
+
+```
+
+```{r cum_rev,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+        blcn_data%>%
+        group_by(project_name)%>%
+        mutate(revenues=cumsum(revenues))%>%
+  filter(reporting_year==2023)%>%
+        ggplot(aes(factor(reporting_year),revenues/10^9))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name,nrow = 1,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  expand_limits(y=30)+
+  scale_y_continuous(breaks=pretty_breaks(n=5))+
+  #theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)     )+
+  theme(axis.text.x = element_blank())+
+  labs(x=NULL,y="Project Revenue (billions of dollars, 2016-2023)",
+       title="Total Bitumen Revenue (2016-2023) by Project, Beaver Lake Cree Nation Core Territory",
+       subtitle=paste("Total revenue from all projects in BLCN Territory since 2016 of CA$",round(total$rev,2)," billion",sep=""),
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by Andrew Leach")
+
+```
+
+
+
+
+## Royalties
+
+```{r cum_roy,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+        blcn_data%>%
+        group_by(project_name)%>%
+        mutate(royalties=cumsum(royalties))%>%
+  filter(reporting_year==2023)%>%
+        ggplot(aes(factor(reporting_year),royalties/10^9))+
+  geom_col(size=0.25,position = position_dodge(width = .25),color="black")+
+  #scale_color_viridis("Royalties Paid\nPer Barrel\nCleaned Bitumen")+
+  #scale_fill_viridis(discrete=FALSE,"Royalties Paid ($/bbl)")+
+  #coord_flip()+
+  scale_fill_brewer()+
+  guides(fill="none",color="none")+
+  facet_wrap(~project_name,nrow = 1,labeller = label_wrap_gen(width = 8, multi_line = TRUE))+
+  #scale_x_reverse()+
+  work_theme()+
+  #expand_limits(y=30)+
+  scale_y_continuous(breaks=pretty_breaks(n=5))+
+  #theme(axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)     )+
+  theme(axis.text.x = element_blank())+
+  labs(x=NULL,y="Royalty Payments (CA$ billions, 2016-2023)",
+       title="Total Royalties Paid (2016-23) by Project, Beaver Lake Cree Nation Core Territory",
+       subtitle=paste("Projects in BLCN Territory have paid CA$",round(total$royalties,2)," billion in royalties since 2016 (CA$",sum(blcn_data%>%filter(reporting_year==2023)%>%select(royalties)/10^9)%>%round(2)," billion paid in 2023)" ,sep=""),
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, graph by Andrew Leach")
+
+```
+
+
+
+
+```{r pipes,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+#gd_pts <- st_read("../blcn/Pipelines_SHP/Pipelines_GCS_NAD83.shp")%>%clean_names()
+
+gd_pts <- st_read("../blcn/Pipelines_SHP/Pipelines_NAD83_10TM_AEPForest.shp")%>%clean_names()%>%
+  st_transform(crs = 4326)
+
+```
+
+```{r reserves,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+#gd_pts <- st_read("../blcn/Pipelines_SHP/Pipelines_GCS_NAD83.shp")%>%clean_names()
+
+res_pts <- st_read("../blcn/ILC/Indigenous_Lands_of_Canada.shp")%>%clean_names()%>%
+  st_transform(crs = 4326)%>%
+  filter(grepl("BEAVER LAKE 131",admin_area_n))
+
+```
+
+
+
+```{r proj_map,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+gd_clean<-gd_pts %>%
+  filter(substance1 %in% c("Natural Gas","Crude Oil","Hydrocarbon Diluents"))
+
+gd_crude<-gd_pts %>%
+  filter(substance1 %in% c("Crude Oil"))
+
+
+larp_pop<- st_read("../blcn/LARP/LA_RAC_Recommended_Population_Centers.shp")%>%
+  st_transform(crs=st_crs(gd_pts))
+larp_pop<- st_read("../blcn/LARP/LA_RAC_Recommended_Population_Centers.shp")%>%
+  st_transform(crs=st_crs(gd_pts))
+
+larp_bd <-st_read("../blcn/LARP/LUF Integrated Regional Plan Boundaries.shp")%>%
+  st_transform(crs=st_crs(gd_pts))
+
+l_ath_bd <-  st_intersection(gd_clean,larp_bd %>% 
+  filter(LUF_CODE=="02"))
+
+
+blcn_terr <-st_read("../blcn/blcn_poly/Beaver Lake Cree Traditional Territory.shp")%>%
+  st_transform(crs=st_crs(gd_pts))
+
+blcn_buffer<-st_buffer(blcn_terr, units::as_units(200, 'kilometer'))
+oil_blcn<-st_intersection(gd_crude,blcn_buffer)
+
+#oil_blcn<-gd_crude#%>%filter(from_fac=="Pipeline",as.numeric(out_diamet)>100)
+
+ggplot(l_ath_bd)+
+  geom_sf(data=oil_blcn,aes(colour="Crude Oil Pipelines"),linewidth=2,fill=NA) +
+  geom_sf(data=blcn_terr,aes(colour="Beaver Lake Cree Nation Core Territory"),fill=NA,linewidth=5) +
+  geom_sf(data=res_pts,aes(colour="Beaver Lake #131 Reserve"),fill="grey80",linewidth=1) +
+  geom_sf(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7,8,11,12,15)))+
+  geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7,8,11,12,15)), aes(label = NAME),nudge_y=.20)+
+  scale_colour_brewer("",palette = "Set1")+
+  theme_minimal()
+  #scale_fill_manual("")+
+ theme_void()+
+  theme(
+    legend.position = "right",
+    legend.margin=margin(c(.05,0,.05,0),unit="cm"),
+    legend.text = element_text(colour="black", size = 12),
+    plot.caption = element_text(size = 10, face = "italic",hjust=0),
+    plot.title = element_text(size=16,face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    #panel.grid.minor = element_blank(),
+    text = element_text(size = 20,face = "bold"),
+    axis.text.y = element_text(size = 12,face = "bold", colour="black"),
+    #axis.text.x = element_blank(),
+    axis.text.x = element_text(size = 10, colour = "black", angle = 90,hjust=0.5,vjust=0.5),
+    strip.text.x = element_text(size = 8, colour = "black", angle = 0),
+    axis.title.y = element_text(size = 14,face = "bold", colour="black"))+
+  labs(x="",y="",
+      title="Crude Oil and Gas Pipeline Infrastructure Within BLCN Territory",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, map by @andrew_leach")
+    
+
+```
+
+
+
+
+```{r proj_map,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+osb_1980 <- st_read("../blcn/BLCN OSProject Boundaries1980s.gpkg")%>%clean_names()
+
+osb_1998 <- st_read("../blcn/BLCN OSProject Boundaries1998.gpkg")%>%clean_names()
+
+osb_2007 <- st_read("../blcn/BLCN OSProject Boundaries2007.gpkg")%>%clean_names()
+
+osb_2011 <- st_read("../blcn/BLCN OSProject Boundaries2011.gpkg")%>%clean_names()
+
+osb_2015 <- st_read("../blcn/BLCN OSProject Boundaries2015.gpkg")%>%clean_names()
+
+osb<-bind_rows(osb_1980,osb_1998,osb_2007,osb_2015)%>%clean_names()%>%
+  group_by(osp_no)%>%
+  mutate(first_year=as.numeric(min(year)),
+         project_name=last(project_name))%>%
+  ungroup()%>%
+  arrange(operator_name,project_name)
+
+#write.csv(file = "projects_osip.csv",osb%>%st_drop_geometry()%>% #select(project_name,operator_name)%>%distinct())
+
+
+
+ggplot(osb) +
+  geom_sf(aes(fill = as_factor(first_year)), color = "white") +
+  geom_sf(data=blcn_terr,aes(colour="Beaver Lake Cree Nation Core Territory"),fill=NA,linewidth=1) +
+  geom_sf(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)))+
+  #geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =             #                                                                     NAME),nudge_y=.50)+
+  geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =                                                                                 NAME),nudge_y=10000)+
+  scale_fill_viridis("",begin = 0.8,end = 0.1,discrete=T)+
+  scale_color_brewer("",palette = "Set1")+
+ tombe_theme()+
+  theme(
+    legend.position = "bottom",
+    legend.margin=margin(c(.05,0,.05,0),unit="cm"),
+    legend.text = element_text(colour="black", size = 12),
+    plot.caption = element_text(size = 10, face = "italic",hjust=0),
+    plot.title = element_text(size=16,face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    #panel.grid.minor = element_blank(),
+    text = element_text(size = 20,face = "bold"),
+    axis.text.y = element_text(size = 12,face = "bold", colour="black"),
+    #axis.text.x = element_blank(),
+    axis.text.x = element_text(size = 10, colour = "black", angle = 90,hjust=0.5,vjust=0.5),
+    strip.text.x = element_text(size = 8, colour = "black", angle = 0),
+    axis.title.y = element_text(size = 14,face = "bold", colour="black"))+
+  facet_wrap(~year,nrow = 1)+
+  labs(x="",y="",title="Oil Sands Project Boundaries Within BLCN Territory Over Time",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, map by @andrew_leach")
+    
+#"~/data_projects/blcn/Great Divide project boundary 2015.gpkg"
+
+```
+
+
+```{r}
+aepa_projects <- read_excel("../blcn/epa-oil-sands-operating-capacity-report-2023-2024.xlsx",sheet="2022 (BY PHASE)") %>% clean_names()
+
+test<-aepa_projects %>% 
+  #mutate(project_name=ifelse(grepl("Cold Lake"),"Cold",project_name))%>%
+  select(operator,project_name) %>% distinct()
+  
+  
+```
+
+
+
+
+```{r,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+all_projects <- st_read("../blcn/OSProjects2015.gdb")%>%clean_names()%>%
+  st_transform(crs=st_crs(gd_pts))%>% st_make_valid()%>%
+  filter(!project_name%in%c("Caribou","Grouse","Walleye","Birchwood",
+                            "Chard","Winefred Lake","West Kirby",
+                            "Mariana - Thornbury","South Leismer","Sage"))%>% #cancelled
+  filter(!project_name%in%c("Whitesands","Foster Creek North","Jackfish East"))%>%
+  mutate(project_name=gsub("Kirby Expansion Project","Kirby",project_name))%>%
+  mutate(project_name=gsub("Tucker Lake","Tucker",project_name))%>%
+  mutate(project_name=gsub("Cold Lake Operations","Cold Lake (Imperial Oil)",project_name))%>%
+  filter(!(operator_name=="MEG Energy Corp."&project_name=="Surmont"))%>%
+  filter(!(operator_name=="MEG Energy Corp."&project_name=="May River")) #cancelled
+
+
+blcn_buffer_50<-st_buffer(blcn_terr, units::as_units(50, 'kilometer'))%>%st_make_valid()%>%
+  st_transform(crs=st_crs(gd_pts))
+
+os_blcn_strict<-st_intersection(all_projects,blcn_terr)
+
+os_blcn<-st_intersection(all_projects,blcn_buffer_50)%>%
+  filter(project_name %in% os_blcn_strict$project_name)%>%
+  #mutate(label=paste(project_name,"\n(",operator_name,")",sep=""))
+  mutate(label=project_name)
+
+library(ggrepel)
+#test<-"tar"
+
+ggplot(blcn_buffer_50) +
+  geom_sf(data=blcn_terr,aes(colour="Beaver Lake Cree Nation Core Territory"),fill=NA,linewidth=1) +
+#  geom_sf(data=all_projects %>% filter(grepl(test, project_name)),aes(fill = as_factor(project_name)), color = "white") +
+ # geom_sf_label(data = all_projects %>% filter(grepl(test, project_name)), aes(label =project_name),size=1)+
+geom_sf(data=os_blcn,aes(),fill="grey40", color = "white") +
+  ggrepel::geom_label_repel(
+    data = os_blcn,
+    aes(label = label, geometry = Shape),size=3.5,
+    stat = "sf_coordinates",
+    min.segment.length = 0
+  )+
+  ggrepel::geom_label_repel(
+    data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)),
+    aes(label = NAME,geometry=geometry),size=3.5, color="red",
+    stat = "sf_coordinates",
+    min.segment.length = 10,
+    nudge_y=-.05
+  )+
+  #geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =                        #                                                         NAME),nudge_y=.10,color="blue")+
+  #geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =             #                                                                     NAME),nudge_y=.50)+
+  #geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =                        #                                                         NAME),nudge_y=10000)+
+  scale_fill_viridis("",begin = 0.8,end = 0.1,discrete=T,guide=FALSE)+
+  scale_color_brewer("",palette = "Set1")+
+ tombe_theme()+
+  theme(
+    legend.position = "bottom",
+    legend.margin=margin(c(.05,0,.05,0),unit="cm"),
+    legend.text = element_text(colour="black", size = 12),
+    plot.caption = element_text(size = 10, face = "italic",hjust=0),
+    plot.title = element_text(size=16,face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    #panel.grid.minor = element_blank(),
+    text = element_text(size = 20,face = "bold"),
+    axis.text.y = element_text(size = 12,face = "bold", colour="black"),
+    #axis.text.x = element_blank(),
+    axis.text.x = element_text(size = 10, colour = "black", angle = 90,hjust=0.5,vjust=0.5),
+    strip.text.x = element_text(size = 8, colour = "black", angle = 0),
+    axis.title.y = element_text(size = 14,face = "bold", colour="black"))+
+  #facet_wrap(~year,nrow = 1)+
+  labs(x="",y="",title="Oil Sands Projects Within BLCN Territory",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, map by @andrew_leach")
+    
+#"~/data_projects/blcn/Great Divide project boundary 2015.gpkg"
+
+```
+
+
+
+```{r proj_map,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+gd_pts <- st_read("../blcn/Pipelines_SHP/Pipelines_GCS_NAD83.shp")%>%clean_names()
+#st_crs(gd_pts)
+
+gd_clean<-gd_pts %>%
+  filter(substance1 %in% c("Natural Gas","Crude Oil","Hydrocarbon Diluents"))
+
+larp_pop<- st_read("../blcn/LARP/LA_RAC_Recommended_Population_Centers.shp")%>%
+  st_transform(crs=st_crs(gd_pts))
+larp_bd <-st_read("../blcn/LARP/LUF Integrated Regional Plan Boundaries.shp")%>%
+  st_transform(crs=st_crs(gd_pts))%>% st_make_valid()
+
+l_ath_bd <-  st_intersection(gd_clean,larp_bd %>% 
+  filter(LUF_CODE=="02"))
+
+ggplot(l_ath_bd)+
+  geom_sf(aes(colour=substance1),fill="white") +
+  geom_sf(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7,8,15)))+
+  geom_sf_text(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7,8,15)), aes(label = NAME))+
+  scale_colour_brewer("",palette = "Set1")+
+  scale_fill_manual("")+
+ theme_void()+
+  theme(
+    legend.position = "right",
+    legend.margin=margin(c(.05,0,.05,0),unit="cm"),
+    legend.text = element_text(colour="black", size = 12),
+    plot.caption = element_text(size = 10, face = "italic",hjust=0),
+    plot.title = element_text(size=16,face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    #panel.grid.minor = element_blank(),
+    text = element_text(size = 20,face = "bold"),
+    axis.text.y = element_text(size = 12,face = "bold", colour="black"),
+    #axis.text.x = element_blank(),
+    axis.text.x = element_text(size = 10, colour = "black", angle = 90,hjust=0.5,vjust=0.5),
+    strip.text.x = element_text(size = 8, colour = "black", angle = 0),
+    axis.title.y = element_text(size = 14,face = "bold", colour="black"))+
+  labs(x="",y="",
+      title="Pipeline Infrastructure Within BLCN Territory Over Time",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, map by @andrew_leach")
+    
+
+```
+
+
+
+```
+
+
