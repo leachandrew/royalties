@@ -68,7 +68,10 @@ colors_tableau10<-function ()
 #load plant data
 make_os_data<-function(){
 
-os_data_2023 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2023 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
+os_data_2024 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2024 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
+
+  os_data_2023 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2023 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
 
 os_data_2022 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2022 Royalty Data", startRow = 1,skipEmptyRows = TRUE,detectDates = TRUE)
   
@@ -84,7 +87,7 @@ os_data_2016 <- read.xlsx(xlsxFile = "royalty_data.xlsx", sheet = "2016 Royalty 
 
 #stack all the years together
 
-os_data<-bind_rows(os_data_2023,os_data_2022,os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
+os_data<-bind_rows(os_data_2024,os_data_2023,os_data_2022,os_data_2021,os_data_2020,os_data_2019,os_data_2018,os_data_2017,os_data_2016)
 
 #clean the names
 
@@ -179,11 +182,9 @@ os_data<-os_data %>% mutate(mine=(project_name %in% mines),
          )
 
 save(os_data,file = "os_data.rdata")
-
-#os_data<-os_data%>%select(project_name,mine,big_project,reporting_year,production=cleaned_crude_bitumen_at_rcp_barrels,gross_revenue,capital_costs,operating_costs,other_net_proceeds,other_costs,royalty_payable,payout_status)
-
+#os_data<-os_data%>%select(project_name,mine,big_project,reporting_year,production=cleaned_crude_bitumen_at_rcp_barrels,gross_revenue#,capital_costs,operating_costs,other_net_proceeds,other_costs,royalty_payable,payout_status)
 #save(os_data,file = "os_data.rdata")
-
+#save(../../courses/econ366w25)
 ```
 
 ## Production
