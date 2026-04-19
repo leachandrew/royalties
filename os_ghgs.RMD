@@ -1,0 +1,266 @@
+---
+title: "Alberta Oil Sands Royalty Data"
+author: Andrew Leach
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+      code_folding: hide
+      includes:
+      after_body: 
+      theme: lumen
+always_allow_html: yes
+editor: source
+
+---
+```{r, echo=FALSE,include=FALSE}
+knitr::opts_chunk$set(message=F,warning=F,cache = T,fig.align='center',dpi=220,fig.width=16,fig.height=9)
+options(scipen = 999)
+```
+
+One of the recommendations of the Alberta Royalty Review in 2015-16 was more transparency with respect to oil sands costs, profits, production and royalty payments. The Alberta Government has followed that recommendation and makes [project-level data](https://open.alberta.ca/opendata/alberta-oil-sands-royalty-data1) available on their open data site. This document compiles those data and provides some basic graphs that you might find useful. Where appropriate, I've provided a link to the R code used to process the data.
+
+```{r,cache=F, include=F}
+library(janitor)
+library(scales)
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(viridis)
+library(ggthemes)
+library(kableExtra)
+library(sf)
+
+work_theme<-function(){
+  theme_tufte(18)+
+     theme(
+           plot.subtitle = element_text(color="grey10",size=rel(1.25)),
+           plot.title = element_text(face="bold"),
+           plot.caption = element_text(color="grey50",size=rel(1)),
+           legend.title = element_text(color="grey10",size=rel(1)),
+           legend.text = element_text(color="grey10",size=rel(1)),
+           strip.text = element_text(size=rel(1.2)),
+           axis.title = element_text(size=rel(1.2)),
+           axis.text = element_text(size=rel(1.2)),
+           axis.text.x = element_text(size=rel(.8)),
+           axis.ticks = element_blank(),
+           panel.spacing = unit(.75,"lines"),
+           legend.position = "bottom",
+           plot.margin = margin(t = .5, r = .5, b = .5, l = .5,unit= "cm"),
+           #axis.text.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0)
+           NULL
+           )+
+  NULL
+}
+
+colors_tableau10<-function () 
+{
+    return(c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", 
+        "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"))
+}
+
+```
+
+<!-- ## Download and Combine the Annual Data for 2016-2022 -->
+
+<!-- The first step is to load and process the data. The code button provides a window into how I've done this. In this case, I've manually combined the data in my own spreadsheet so I can see any changes and also look up individual project information easily. -->
+
+
+```{r load data,cache=T,include=F}
+    file_name<-"https://open.alberta.ca/dataset/3021d788-d4c9-4f49-a849-47b6c02f49cd/resource/ceebbfe4-51b7-4bb6-b4ff-cc694ca09d5b/download/alberta-oil-sands-greenhouse-gas-emission-intensity-analysis.xlsx"
+    local_file<-"os_ghgs.xlsx"
+    skip_file<-TRUE
+      if (file.exists(local_file)) {
+      # Get file information
+      file_info <- file.info(local_file)
+      # Get the last modification time
+      mod_time <- file_info$mtime
+      # Check if the file was modified in the last 30 days
+      if (difftime(Sys.time(), mod_time, units = "days") <= 30) {
+      skip_file<-FALSE
+      message("The file exists and was created/modified in the last day so not downloading.")
+      } else {
+        message("The file exists but was not created/modified in the last day.")
+      }
+    } else {
+      message("The file does not exist.")
+    }
+    if(skip_file)
+    download.file(file_name,local_file,mode="wb")
+    prod_data<-read_excel(local_file,sheet = "In Situ Production")
+    emissions_data<-read_excel(local_file,sheet = "Emissions and Cogen Data")
+    ei_data<-read_excel(local_file,sheet = "Emission Intensity",range="A4:BA36")
+
+
+
+download.file("",destfile = ,mode = "wb")
+
+```
+
+
+```{r}
+library(httr)
+url <- "https://geospatial.alberta.ca/titan/rest/services/boundary/military_base_and_training_ground/MapServer/0/query"
+
+# Set up the query parameters
+params <- list(
+  where = "1=1",
+  outFields = "*",
+  f = "geojson"
+)
+
+# Make the GET request
+response <- GET(url, query = params)
+
+# Check if the request was successful
+if (status_code(response) == 200) {
+  # Parse the GeoJSON content
+  geojson_content <- content(response, as = "text", encoding = "UTF-8")
+  clawr_data <- st_read(geojson_content)
+} else {
+  stop("Failed to retrieve data from the REST service.")
+}
+
+
+```
+
+```{r}
+aepa_projects <- read_excel("../blcn/epa-oil-sands-operating-capacity-report-2023-2024.xlsx",sheet="2022 (BY PHASE)") %>% clean_names()
+
+test<-aepa_projects %>% 
+  #mutate(project_name=ifelse(grepl("Cold Lake"),"Cold",project_name))%>%
+  select(operator,project_name) %>% distinct()
+  
+  
+```
+
+
+
+
+```{r,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+all_projects <- st_read("../blcn/OSProjects2015.gdb")%>%clean_names()%>%
+  st_transform(crs=st_crs(gd_pts))%>% st_make_valid()%>%
+  filter(!project_name%in%c("Caribou","Grouse","Walleye","Birchwood",
+                            "Chard","Winefred Lake","West Kirby",
+                            "Mariana - Thornbury","South Leismer","Sage"))%>% #cancelled
+  filter(!project_name%in%c("Whitesands","Foster Creek North","Jackfish East"))%>%
+  mutate(project_name=gsub("Kirby Expansion Project","Kirby",project_name))%>%
+  mutate(project_name=gsub("Tucker Lake","Tucker",project_name))%>%
+  mutate(project_name=gsub("Cold Lake Operations","Cold Lake (Imperial Oil)",project_name))%>%
+  filter(!(operator_name=="MEG Energy Corp."&project_name=="Surmont"))%>%
+  filter(!(operator_name=="MEG Energy Corp."&project_name=="May River")) #cancelled
+
+
+blcn_buffer_20<-st_buffer(blcn_terr, units::as_units(20, 'kilometer'))%>%st_make_valid()%>%
+  st_transform(crs=st_crs(gd_pts))
+
+os_blcn_strict<-st_intersection(all_projects,blcn_terr)
+
+os_blcn<-st_intersection(all_projects,blcn_buffer_20)%>%
+  filter(project_name %in% os_blcn_strict$project_name)%>%
+  #mutate(label=paste(project_name,"\n(",operator_name,")",sep=""))
+  mutate(label=project_name)
+
+
+
+library(ggrepel)
+#test<-"tar"
+
+ggplot(blcn_buffer_20) +
+  geom_sf(data=blcn_terr,aes(colour="Beaver Lake Cree Nation Core Territory"),fill=NA,linewidth=1) +
+#  geom_sf(data=all_projects %>% filter(grepl(test, project_name)),aes(fill = as_factor(project_name)), color = "white") +
+ # geom_sf_label(data = all_projects %>% filter(grepl(test, project_name)), aes(label =project_name),size=1)+
+geom_sf(data=os_blcn,aes(),fill="grey40", color = "white") +
+  ggrepel::geom_label_repel(
+    data = os_blcn,
+    aes(label = label, geometry = Shape),size=3.5,
+    stat = "sf_coordinates",
+    min.segment.length = 0
+  )+
+  ggrepel::geom_label_repel(
+    data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)),
+    aes(label = NAME,geometry=geometry),size=3.5, color="red",
+    stat = "sf_coordinates",
+    min.segment.length = 10,
+    nudge_y=-.05
+  )+
+  #geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =                        #                                                         NAME),nudge_y=.10,color="blue")+
+  #geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =             #                                                                     NAME),nudge_y=.50)+
+  #geom_sf_label(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7)), aes(label =                        #                                                         NAME),nudge_y=10000)+
+  scale_fill_viridis("",begin = 0.8,end = 0.1,discrete=T,guide=FALSE)+
+  scale_color_brewer("",palette = "Set1")+
+ tombe_theme()+
+  theme(
+    legend.position = "bottom",
+    legend.margin=margin(c(.05,0,.05,0),unit="cm"),
+    legend.text = element_text(colour="black", size = 12),
+    plot.caption = element_text(size = 10, face = "italic",hjust=0),
+    plot.title = element_text(size=16,face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    #panel.grid.minor = element_blank(),
+    text = element_text(size = 20,face = "bold"),
+    axis.text.y = element_text(size = 12,face = "bold", colour="black"),
+    #axis.text.x = element_blank(),
+    axis.text.x = element_text(size = 10, colour = "black", angle = 90,hjust=0.5,vjust=0.5),
+    strip.text.x = element_text(size = 8, colour = "black", angle = 0),
+    axis.title.y = element_text(size = 14,face = "bold", colour="black"))+
+  #facet_wrap(~year,nrow = 1)+
+  labs(x="",y="",title="Oil Sands Projects Within BLCN Territory",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, map by @andrew_leach")
+    
+#"~/data_projects/blcn/Great Divide project boundary 2015.gpkg"
+
+```
+
+
+
+```{r proj_map,fig.align='center',fig.width=16, fig.height=8,dpi=220}
+
+gd_pts <- st_read("../blcn/Pipelines_SHP/Pipelines_GCS_NAD83.shp")%>%clean_names()
+#st_crs(gd_pts)
+
+gd_clean<-gd_pts %>%
+  filter(substance1 %in% c("Natural Gas","Crude Oil","Hydrocarbon Diluents"))
+
+larp_pop<- st_read("../blcn/LARP/LA_RAC_Recommended_Population_Centers.shp")%>%
+  st_transform(crs=st_crs(gd_pts))
+larp_bd <-st_read("../blcn/LARP/LUF Integrated Regional Plan Boundaries.shp")%>%
+  st_transform(crs=st_crs(gd_pts))%>% st_make_valid()
+
+l_ath_bd <-  st_intersection(gd_clean,larp_bd %>% 
+  filter(LUF_CODE=="02"))
+
+ggplot(l_ath_bd)+
+  geom_sf(aes(colour=substance1),fill="white") +
+  geom_sf(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7,8,15)))+
+  geom_sf_text(data = larp_pop%>%filter(OBJECTID %in% c(3,6,7,8,15)), aes(label = NAME))+
+  scale_colour_brewer("",palette = "Set1")+
+  scale_fill_manual("")+
+ theme_void()+
+  theme(
+    legend.position = "right",
+    legend.margin=margin(c(.05,0,.05,0),unit="cm"),
+    legend.text = element_text(colour="black", size = 12),
+    plot.caption = element_text(size = 10, face = "italic",hjust=0),
+    plot.title = element_text(size=16,face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    #panel.grid.minor = element_blank(),
+    text = element_text(size = 20,face = "bold"),
+    axis.text.y = element_text(size = 12,face = "bold", colour="black"),
+    #axis.text.x = element_blank(),
+    axis.text.x = element_text(size = 10, colour = "black", angle = 90,hjust=0.5,vjust=0.5),
+    strip.text.x = element_text(size = 8, colour = "black", angle = 0),
+    axis.title.y = element_text(size = 14,face = "bold", colour="black"))+
+  labs(x="",y="",
+      title="Pipeline Infrastructure Within BLCN Territory Over Time",
+       #subtitle="Excluding Electricity,by NAICS 4-Digit Code",
+       caption="Data via Government of Alberta, map by @andrew_leach")
+    
+
+```
+
+
+
+```
+
+

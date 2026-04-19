@@ -182,9 +182,10 @@ os_data<-os_data %>% mutate(mine=(project_name %in% mines),
          )
 
 save(os_data,file = "os_data.rdata")
-#os_data<-os_data%>%select(project_name,mine,big_project,reporting_year,production=cleaned_crude_bitumen_at_rcp_barrels,gross_revenue#,capital_costs,operating_costs,other_net_proceeds,other_costs,royalty_payable,payout_status)
+
+#os_data<-os_data%>%select(project_name,mine,big_project,reporting_year,production=cleaned_crude_bitumen_at_rcp_barrels,gross_revenue,capital_costs,operating_costs,other_net_proceeds,other_costs,royalty_payable,payout_status,last_prod)
 #save(os_data,file = "os_data.rdata")
-#save(../../courses/econ366w25)
+#save(os_data,file="../../Courses/econ_366_w26/files/os_data.rdata")
 ```
 
 ## Production
@@ -514,9 +515,9 @@ ggplot(os_data %>% filter(big_project,!mine)%>%
 
 ```{r mine net profits,fig.align='center',fig.width=15, fig.height=8,dpi=220}
 
-ggplot(os_data %>% filter(mine,project_name!="Fort Hills")%>%
+ggplot(os_data %>% filter(mine,!is.infinite(op_profit))%>%
          mutate(project_type=ifelse(mine,"Mine","In Situ"),
-                project_name_factor=as.factor(project_name),
+                project_name_factor=as_factor(project_name),
                 project_name_factor=fct_reorder(project_name_factor,last_prod),
                 payout=as_factor(payout_status),
                 payout=fct_relevel(payout,"PRE")
